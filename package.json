@@ -26,6 +26,6 @@
     "setup:check": "node scripts/setup.mjs check"
   },
   "devDependencies": {
-    "turbo": "^1.10.0"
+    "turbo": "^2.10.12"
   }
 }
