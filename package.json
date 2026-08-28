@@ -1,0 +1,31 @@
+{
+  "name": "monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "packageManager": "npm@11.5.2",
+  "engines": {
+    "node": ">=20"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "turbo run dev",
+    "dev:web": "npm run -w apps/web dev",
+    "dev:api": "npm run -w apps/api dev",
+    "build": "turbo run build",
+    "start": "turbo run start",
+    "lint": "turbo run lint",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:api": "npm run -w apps/api test",
+    "test:web": "npm run -w apps/web test",
+    "setup": "node scripts/setup.mjs",
+    "setup:env": "node scripts/setup.mjs env",
+    "setup:check": "node scripts/setup.mjs check"
+  },
+  "devDependencies": {
+    "turbo": "^1.10.0"
+  }
+}

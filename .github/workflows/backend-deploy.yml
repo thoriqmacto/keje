@@ -1,0 +1,157 @@
+name: Deploy API
+
+# Runs only after CI has gone green on main, so a deploy can never ship a
+# commit the test suite rejected. workflow_dispatch is there for a manual
+# re-deploy or for the first supervised run.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+# Never deploy twice at once, and never cancel a deploy that is already
+# running -- interrupting midway through migrations is far worse than queuing.
+concurrency:
+  group: deploy-api-production
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy apps/api to the VPS
+    runs-on: ubuntu-latest
+
+    # Attach a GitHub Environment so protection rules (required reviewers, wait
+    # timers) and the secrets below can be scoped to production.
+    environment: production
+
+    # DEPLOY_ENABLED is the master switch and is deliberately not defaulted on.
+    # Until the repository variable is set to "true" this job is skipped, so
+    # merging the workflow changes nothing and a half-configured deploy cannot
+    # fire on the next push to main.
+    if: >-
+      vars.DEPLOY_ENABLED == 'true' &&
+      (github.event_name == 'workflow_dispatch' ||
+       github.event.workflow_run.conclusion == 'success')
+
+    steps:
+      # Deploy the exact commit CI validated, not whatever main happens to be
+      # by the time this runs. On a manual dispatch that is the ref chosen in
+      # the UI.
+      - name: Resolve the commit to deploy
+        id: target
+        run: echo "sha=${{ github.event.workflow_run.head_sha || github.sha }}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+        run: |
+          mkdir -p ~/.ssh && chmod 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+
+          # Pinning the host key prevents a man-in-the-middle from receiving
+          # the deploy key. ssh-keyscan is the fallback, but it trusts whatever
+          # answers on first contact -- set DEPLOY_KNOWN_HOSTS to avoid that.
+          if [ -n "$DEPLOY_KNOWN_HOSTS" ]; then
+            printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          else
+            echo "::warning::DEPLOY_KNOWN_HOSTS is not set; falling back to ssh-keyscan, which trusts the host on first contact."
+            ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          fi
+          chmod 600 ~/.ssh/known_hosts
+
+          # Check the pin actually covers what the next step connects to.
+          #
+          # OpenSSH keys a non-default port as [host]:port, so an entry written
+          # by a portless `ssh-keyscan host` does not match a connection to
+          # port 2222 -- and vice versa. Neither does an entry for the IP when
+          # DEPLOY_HOST is a name. Every one of those surfaces only as the five
+          # words "Host key verification failed", which names neither the cause
+          # nor the fix, so the check is done here where both are known.
+          if [ "$DEPLOY_PORT" = "22" ]; then
+            KNOWN_HOSTS_LOOKUP="$DEPLOY_HOST"
+          else
+            KNOWN_HOSTS_LOOKUP="[$DEPLOY_HOST]:$DEPLOY_PORT"
+          fi
+
+          if ! ssh-keygen -F "$KNOWN_HOSTS_LOOKUP" -f ~/.ssh/known_hosts > /dev/null 2>&1; then
+            echo "::error::known_hosts has no entry matching the host and port this deploy connects to, so SSH will refuse with 'Host key verification failed'."
+            echo "Entries parsed from the current known_hosts: $(ssh-keygen -l -f ~/.ssh/known_hosts 2>/dev/null | wc -l)"
+            echo "Regenerate the DEPLOY_KNOWN_HOSTS secret on a trusted machine, passing the same port the deploy uses:"
+            echo "    ssh-keyscan -p <DEPLOY_PORT> <DEPLOY_HOST>"
+            echo "Use exactly the DEPLOY_HOST value the secret holds -- an entry for the IP does not match a hostname."
+            echo "If that reports zero entries, the port or host is wrong or the server is unreachable from here."
+            exit 1
+          fi
+
+      - name: Deploy
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          DEPLOY_SHA: ${{ steps.target.outputs.sha }}
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "$DEPLOY_PORT" \
+              -o BatchMode=yes \
+              "$DEPLOY_USER@$DEPLOY_HOST" \
+              "DEPLOY_PATH='$DEPLOY_PATH' DEPLOY_SHA='$DEPLOY_SHA' bash -euo pipefail -s" <<'REMOTE'
+            cd "$DEPLOY_PATH"
+
+            echo "==> Deploying $DEPLOY_SHA"
+            git fetch --prune origin
+            git reset --hard "$DEPLOY_SHA"
+
+            # artisan lives in apps/api, not the repository root. DEPLOY_PATH
+            # may be either the repository root or apps/api itself -- git works
+            # from either since apps/api is inside the worktree. Detect which
+            # layout we have and cd accordingly.
+            if [ -f artisan ]; then
+              :
+            elif [ -f apps/api/artisan ]; then
+              cd apps/api
+            else
+              echo "::error::No artisan found at $DEPLOY_PATH or $DEPLOY_PATH/apps/api. DEPLOY_PATH must be the repository root or the apps/api directory inside it."
+              exit 1
+            fi
+
+            # Always lift maintenance mode, including on failure. A deploy that
+            # dies midway must not leave the site down indefinitely. Set after
+            # the cd so the trap resolves artisan, and before `down` so there is
+            # no window where the site is down with no trap armed.
+            trap 'php artisan up || true' EXIT
+
+            php artisan down --retry=15 || true
+
+            composer install --no-dev --optimize-autoloader --no-interaction --prefer-dist --no-progress
+
+            php artisan migrate --force
+
+            # Rebuild rather than clear: a cleared cache under load means every
+            # request re-parses config and routes.
+            php artisan config:cache
+            php artisan route:cache
+            php artisan view:cache
+
+            # Signals long-running workers to exit after their current job so
+            # they pick up the new code.
+            php artisan queue:restart
+
+            echo "==> Deployed $DEPLOY_SHA"
+          REMOTE
+
+      - name: Report
+        if: always()
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            echo "::notice::Deployed ${{ steps.target.outputs.sha }} to production."
+          else
+            echo "::error::Deploy of ${{ steps.target.outputs.sha }} failed. The remote trap lifts maintenance mode, but verify the app is up and check whether migrations applied."
+          fi
