@@ -70,7 +70,7 @@ class EmailVerificationTest extends TestCase
         );
 
         $this->get($url)
-            ->assertRedirect(rtrim((string) env('FRONTEND_URL', 'http://localhost:3000'), '/') . '/verify-email?status=verified');
+            ->assertRedirect(rtrim((string) env('FRONTEND_URL', 'http://localhost:3000'), '/').'/verify-email?status=verified');
 
         $this->assertNotNull($user->fresh()->email_verified_at);
         Event::assertDispatched(Verified::class);

@@ -37,8 +37,11 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                             <Link href="/dashboard" className="hover:text-foreground">
                                 Dashboard
                             </Link>
-                            <Link href="/notes" className="hover:text-foreground">
-                                Notes
+                            <Link href="/studio" className="hover:text-foreground">
+                                Studio
+                            </Link>
+                            <Link href="/studio/topics" className="hover:text-foreground">
+                                Topics
                             </Link>
                             <Link href="/settings" className="hover:text-foreground">
                                 Settings

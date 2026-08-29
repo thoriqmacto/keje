@@ -2,6 +2,10 @@
 
 namespace App\Providers;
 
+use App\Services\Media\FfmpegService;
+use App\Services\Media\FfprobeService;
+use App\Services\Media\FontMetrics;
+use App\Services\Media\TemplateRegistry;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Auth\Notifications\VerifyEmail;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -18,7 +22,35 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        $this->registerMediaServices();
+    }
+
+    /**
+     * Media services are singletons: TemplateRegistry and FontMetrics both
+     * memoise (template files, glyph measurements) and that cache is worth
+     * keeping for the length of a render.
+     */
+    private function registerMediaServices(): void
+    {
+        $this->app->singleton(TemplateRegistry::class, fn (): TemplateRegistry => new TemplateRegistry(
+            basePath: (string) config('media.templates_path'),
+            defaultKey: (string) config('media.default_template'),
+        ));
+
+        $this->app->singleton(FontMetrics::class, fn (): FontMetrics => new FontMetrics(
+            fonts: (array) config('media.fonts'),
+            pointScale: (float) config('media.font_point_scale'),
+        ));
+
+        $this->app->singleton(FfprobeService::class, fn ($app): FfprobeService => new FfprobeService(
+            binary: (string) config('media.ffprobe_path'),
+            timeout: (int) config('media.probe_timeout'),
+        ));
+
+        $this->app->singleton(FfmpegService::class, fn ($app): FfmpegService => new FfmpegService(
+            binary: (string) config('media.ffmpeg_path'),
+            timeout: (int) config('media.render_timeout'),
+        ));
     }
 
     /**

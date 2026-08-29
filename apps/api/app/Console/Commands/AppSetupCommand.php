@@ -14,7 +14,7 @@ class AppSetupCommand extends Command
     public function handle(): int
     {
         $monorepoRoot = dirname(base_path(), 2);
-        $script = $monorepoRoot . DIRECTORY_SEPARATOR . 'scripts' . DIRECTORY_SEPARATOR . 'setup.mjs';
+        $script = $monorepoRoot.DIRECTORY_SEPARATOR.'scripts'.DIRECTORY_SEPARATOR.'setup.mjs';
 
         if (! is_file($script)) {
             $this->error("Setup script not found: {$script}");
