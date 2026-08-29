@@ -3,3 +3,10 @@
 *.png filter=lfs diff=lfs merge=lfs -text
 *.jpg filter=lfs diff=lfs merge=lfs -text
 *.mp4 filter=lfs diff=lfs merge=lfs -text
+
+# Video template assets are read by the renderer at runtime and are only a few
+# kilobytes each. Keeping them out of LFS matters: a deploy host that clones
+# without git-lfs would otherwise get pointer text files, and `is_file()` would
+# still be true — so the render would fail (or silently lose the branding)
+# rather than the problem surfacing at checkout.
+apps/api/resources/media/templates/**/*.png -filter -diff -merge -text
