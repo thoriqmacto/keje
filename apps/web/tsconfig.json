@@ -6,6 +6,10 @@
     "skipLibCheck": true,
     "strict": true,
     "noEmit": true,
+    // Node's built-in test runner resolves relative imports as ESM, which
+    // requires the explicit .ts extension. Safe here because nothing is
+    // emitted — Next.js compiles the app with SWC.
+    "allowImportingTsExtensions": true,
     "esModuleInterop": true,
     "module": "esnext",
     "moduleResolution": "bundler",
