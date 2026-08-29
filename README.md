@@ -375,6 +375,7 @@ See `apps/web/.env.local.example`.
 - **`401` on `/me` right after login.** You're probably in SPA-cookie mode without `CORS_SUPPORTS_CREDENTIALS=true` or with a missing `SANCTUM_STATEFUL_DOMAINS` entry. Or, in bearer mode, localStorage was cleared. Switch back to bearer (the default) with `npm run setup:env`.
 - **`/dashboard` redirects to `/login`.** Middleware relies on the `auth_hint` cookie set at login time. If you cleared cookies, sign in again.
 - **Herd link fails.** You're on Linux/Windows — Herd integration is macOS only. Answer "no" to the Herd prompt and use `php artisan serve`.
+- **Requests fail with `(blocked:csp)` in the browser console.** The frontend's Content-Security-Policy must name the Laravel API origin, because on Vercel the API is a *different* origin. The policy in `apps/web/next.config.ts` derives that origin from `NEXT_PUBLIC_API_BASE_URL` at **build time** and adds it to `connect-src`, `img-src` and `media-src`. So if the variable is missing, wrong, or was changed without redeploying, the browser blocks login, artwork and video playback before any request reaches Laravel. Set `NEXT_PUBLIC_API_BASE_URL` in the Vercel project and **redeploy** — changing it alone is not enough. Confirm with `curl -sI https://<your-app> | grep -i content-security-policy`; `connect-src` should list your API origin, not just `'self'`.
 
 ---
 
@@ -747,6 +748,8 @@ API_PROXY_TARGET=https://api.yourapp.com
 ```
 
 Sprint 1 adds **no new frontend environment variables**. FFmpeg runs on the VPS, not on Vercel. Google client secrets belong on the VPS, not on Vercel, and must never appear in a `NEXT_PUBLIC_*` variable.
+
+`NEXT_PUBLIC_API_BASE_URL` does double duty: besides pointing the API client at Laravel, its **origin** is baked into the Content-Security-Policy at build time (`connect-src`, `img-src`, `media-src`). Because the API is a different origin from the Vercel deployment, a missing or stale value means the browser blocks every API call, background image and video with `(blocked:csp)`. It is read during `next build`, so changing it in the Vercel dashboard requires a **redeploy** to take effect.
 
 ---
 
