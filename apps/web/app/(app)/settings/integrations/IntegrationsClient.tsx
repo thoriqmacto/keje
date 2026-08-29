@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { SettingsHeader } from "@/components/settings/settings-nav";
 import { Button } from "@/components/ui/button";
 import {
     Card,
@@ -86,12 +87,9 @@ export default function IntegrationsClient() {
 
     return (
         <section className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-10">
-            <div className="flex flex-col gap-1">
-                <h1 className="text-3xl font-semibold tracking-tight">Integrations</h1>
-                <p className="text-muted-foreground">
-                    Google Drive backup and YouTube publishing. Credentials stay on the API server.
-                </p>
-            </div>
+            {/* Breadcrumb + section tabs; the "Settings" crumb and the Account
+                tab are both routes back out of this sub-section. */}
+            <SettingsHeader description="Google Drive backup and YouTube publishing. Credentials stay on the API server." />
 
             {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
 

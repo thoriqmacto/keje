@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { AxiosError } from "axios";
 import { api } from "@/lib/api";
 import { useAuth } from "@/components/auth-provider";
+import { SettingsHeader, SettingsSectionLinks } from "@/components/settings/settings-nav";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -244,18 +245,16 @@ function PasswordSection() {
 export default function SettingsClient() {
     return (
         <section className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-12">
-            <div className="flex flex-col gap-2">
-                <span className="text-xs uppercase tracking-widest text-muted-foreground">
-                    Account
-                </span>
-                <h1 className="text-3xl font-semibold tracking-tight">Settings</h1>
-                <p className="text-muted-foreground">
-                    Update your profile and password.
-                </p>
-            </div>
+            <SettingsHeader description="Update your profile and password." />
             <VerifyEmailSection />
             <ProfileSection />
             <PasswordSection />
+            {/*
+                Links to the other Settings sections — currently Integrations.
+                The Google connection UI itself lives only at
+                /settings/integrations; this is a pointer, not a copy.
+            */}
+            <SettingsSectionLinks />
         </section>
     );
 }
