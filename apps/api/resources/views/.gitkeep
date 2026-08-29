@@ -1,0 +1,12 @@
+Keje is an API-only Laravel app and ships no Blade templates, but this
+directory must still exist.
+
+Laravel resolves views from resource_path('views') by default, and
+`php artisan view:cache` — run by the Deploy API workflow and included in
+`php artisan optimize` — fails outright when the directory is missing:
+
+    The ".../apps/api/resources/views" directory does not exist.
+
+Git does not track empty directories, so this placeholder is what keeps it
+present after a `git reset --hard` on the deploy host. Delete it only if you
+also stop running view:cache/optimize.
