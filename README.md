@@ -1,18 +1,36 @@
-# monorepo — Laravel + Next.js starter
+# Keje
 
-A reusable starter kit for new web apps. Laravel 12 API backend, Next.js 15 frontend, organized as a Turborepo.
+Keje is a personal YouTube content-production and publishing workflow application.
+
+It converts lecture audio recordings and background artwork into ready-to-upload YouTube videos using FFmpeg, manages the content-production workflow, backs rendered videos up to Google Drive, and integrates with the YouTube Data API for uploading and scheduled publication.
+
+```
+Lecture audio
+     +
+Background image
+     +
+Content metadata
+     ↓
+Keje Content Studio
+     ↓
+Laravel queue
+     ↓
+FFmpeg
+     ↓
+YouTube-ready MP4
+     ├── Google Drive
+     └── YouTube
+```
+
+The manual workflow it replaces — Audacity pre-processing, a hand-written FFmpeg shell script, manual Drive upload, manual YouTube scheduling — collapses into one form and one **Render** button. **The Audacity step is gone**: Keje accepts the original recording and normalises it itself.
 
 ```
 apps/
-├── api/   Laravel 12 REST API (Sanctum auth, SQLite default)
-└── web/   Next.js 15 App Router (TypeScript, Tailwind 4, shadcn/ui)
+├── api/   Laravel 12 REST API
+│         queue jobs · FFmpeg · Google Drive · YouTube
+│
+└── web/   Next.js 15 Content Studio UI
 ```
-
-After setup you get a working baseline:
-
-1. `/` public landing page
-2. `/register` and `/login` auth flow
-3. `/dashboard` authenticated page that talks to the Laravel API
 
 ---
 
@@ -317,6 +335,29 @@ See `apps/api/.env.example`. Key values the setup script manages:
 - `CORS_SUPPORTS_CREDENTIALS` — `true` only in SPA-cookie mode.
 - `SANCTUM_STATEFUL_DOMAINS` — only matters in SPA-cookie mode.
 - `SANCTUM_TOKEN_EXPIRATION_HOURS` — bearer token lifetime (default 8).
+- `APP_TIMEZONE` — `Asia/Pontianak`. Timestamps are still stored UTC; this is the timezone the app reasons in, so behaviour never depends on the VPS clock's timezone.
+- `QUEUE_CONNECTION` — must not be `sync`; rendering runs on the `media` queue.
+
+Media rendering (API host only — see `apps/api/.env.example` for the annotated list):
+
+- `MEDIA_FFMPEG_PATH`, `MEDIA_FFPROBE_PATH` — binaries on the render host.
+- `MEDIA_FONT_FILE`, `MEDIA_FONT_BOLD_FILE` — TrueType fonts the templates draw with.
+- `MEDIA_MAX_AUDIO_MB` (512), `MEDIA_MAX_IMAGE_MB` (20) — upload ceilings.
+- `MEDIA_VIDEO_WIDTH`, `MEDIA_VIDEO_HEIGHT`, `MEDIA_VIDEO_FPS` — output canvas.
+- `MEDIA_VIDEO_CRF`, `MEDIA_VIDEO_PRESET` — H.264 quality/speed.
+- `MEDIA_WAVE_WIDTH`, `MEDIA_WAVE_HEIGHT`, `MEDIA_WAVE_COLOR`, `MEDIA_WAVE_MODE` — waveform.
+- `MEDIA_AUDIO_SAMPLE_RATE`, `MEDIA_AUDIO_BITRATE` — output audio track.
+- `MEDIA_LOUDNORM_ENABLED` — EBU R128 loudness normalisation. **Off by default.**
+- `MEDIA_RENDER_TIMEOUT` — ceiling for one render; keep below the worker's `--timeout`.
+- `MEDIA_STREAM_LINK_TTL_MINUTES` — lifetime of a signed playback link.
+
+Google — **secrets, API host only, never Vercel, never `NEXT_PUBLIC_*`**:
+
+- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`.
+- `GOOGLE_DRIVE_FOLDER_ID` — optional; a folder is created by name when unset.
+- `GOOGLE_DRIVE_FOLDER_NAME` — default `Keje YouTube Outputs`.
+- `YOUTUBE_EXPECTED_CHANNEL_ID` — uploads are blocked when the connected channel differs.
+- `YOUTUBE_DEFAULT_CATEGORY_ID` — default `27` (Education).
 
 ### `apps/web/.env.local`
 See `apps/web/.env.local.example`.
@@ -337,9 +378,424 @@ See `apps/web/.env.local.example`.
 
 ---
 
-## Example resource
+## Kajian Tematik video template
 
-A small **Notes** demo (`/notes` in the web app, `/api/v1/notes` on the API) ships as the end-to-end CRUD template. It's deliberately domain-neutral — copy it when building a real resource, or delete it when you don't need it. Every Notes file has a header comment and `STRUCTURE.md` lists the full removal checklist.
+`kajian-tematik` is the first production template. The background artwork you upload should be **clean** — no titles, no speaker name, no branding burnt in. Keje overlays all eight elements automatically from the database, so the same artwork can be reused across a whole series.
+
+| # | Element | Source | Behavior |
+|---|---------|--------|----------|
+| 1 | Topic | `ContentTopic` | Top-left; conceptually maps to a YouTube playlist |
+| 2 | Topic sequence | `ContentProject` | Stored as an integer, rendered as `TEMA #N` |
+| 3 | Speaker label | Template | Constant `USTADZ`, muted grey, never entered per project |
+| 4 | Speaker name | `Speaker` | Bright white, uppercased for render only |
+| 5 | Branding | Template asset | Constant `KAJIAN ● TEMATIK`, committed PNG |
+| 6 | Primary title | `ContentProject` | Largest font, **exactly one row**, auto-shrinks to fit |
+| 7 | Subtitle | `ContentProject` | Smaller, **maximum two rows**, balanced word wrap |
+| 8 | Part | `ContentProject` | Stored as an integer, rendered as `~ PART-N ~`; omitted when null |
+
+Elements #3 and #4 share a baseline despite their different sizes. #6 never wraps: it shrinks from its preferred size down to a floor, and if it still does not fit the render is **refused with a message** rather than cropping the text. #7 behaves the same way for two lines and never produces a third.
+
+### Geometry and typography
+
+All of it lives in one file — `apps/api/resources/media/templates/kajian-tematik/template.php`. Nothing is hardcoded in a service or a controller.
+
+| Element | Position (1280×720) | Font | Size | Min size | Colour | Align | Max lines |
+|---|---|---|---|---|---|---|---|
+| #1 Topic | x 48, y 46, w 640 | sans_bold | 30 | 20 | `#FFFFFF` | left | 1 |
+| #2 Topic sequence | x 48, y 88, w 640 | sans_bold | 24 | 18 | `#DCDCDC` | left | 1 |
+| #3 Speaker label | centred group, baseline 232 | sans_bold | 22 | 16 | `#B5B5B5` | — | 1 |
+| #4 Speaker name | centred group, baseline 232 | sans_bold | 32 | 20 | `#FFFFFF` | — | 1 |
+| #5 Branding | x 1022, y 42, 210×76 | *(image asset)* | — | — | — | — | — |
+| #6 Primary title | x 48, y 286, w 1184 | sans_bold | 72 | 38 | `#FFFFFF` | center | 1 |
+| #7 Subtitle | x 100, y 380, w 1080 | sans_bold | 38 | 24 | `#F0F0F0` | center | 2 |
+| #8 Part | x 48, y 486, w 1184 | sans_bold | 28 | 20 | `#FFFFFF` | center | 1 |
+| Waveform | x 320, y 540, 640×150 | — | — | — | red, `cline` | — | — |
+
+Safe margin is 48 px on every edge. Everything below y 540 is the reserved waveform zone, so the wave can never collide with the part marker or the subtitle.
+
+Adding another template means adding another directory under `resources/media/templates/` — the renderer, the models and the API do not change.
+
+---
+
+## The content workflow
+
+1. Create or select a **Topic** (`Riyadhush Shalihin`).
+2. Set the **topic sequence** (`11` → renders as `TEMA #11`). Keje suggests the next free number.
+3. Create or select a **Speaker** (`Syafiq Riza Basalamah`).
+4. Upload the **lecture audio** — the original recording, straight off the recorder.
+5. Upload the **clean background artwork**.
+6. Enter the **primary title** (`Keutamaan Lapar, Hidup`).
+7. Enter the **supporting subtitle**.
+8. Enter the optional **video part** (`3` → `~ PART-3 ~`).
+9. Enter the **YouTube metadata** — separate from the on-screen title.
+10. Review the **Kajian Tematik preview**.
+11. **Render**.
+12. Monitor progress.
+13. Preview and download the MP4.
+14. Back up to Google Drive.
+15. Upload to YouTube, immediately or scheduled.
+
+Steps 14 and 15 are independent of each other and of the render: a failed Drive backup never invalidates a good render, and rendering never publishes anything on its own.
+
+---
+
+## Media pipeline
+
+**Audio in** — `.mp3`, `.mpeg`, `.mpg`, `.m4a`, `.wav`, `.aac`. The extension and the browser's MIME type are treated as claims only: **ffprobe** decides whether a file is usable, and reports codec, duration, sample rate, channels and bitrate. A file with no audio stream is rejected and deleted. An MPEG carrying both video and audio is accepted — the first audio stream is used.
+
+**Background in** — `.jpg`, `.jpeg`, `.png`, `.webp`, verified as a real image and measured. Scaled to **cover** 1280×720 and centre-cropped, preserving aspect ratio. Images are never stretched, and the uploaded file is never modified — the readability gradient exists only during the render.
+
+**Video out**
+
+| | |
+|---|---|
+| Resolution | 1280 × 720 (16:9) |
+| Container | MP4, `+faststart` |
+| Video | H.264, High profile, `yuv420p`, 30 fps, CRF 20, preset medium |
+| Audio | AAC, 48 kHz, 256 kbps |
+| Duration | the source audio's duration |
+
+Sprint 1 normalises the container, codec and sample rate only. **EBU R128 loudness normalisation is wired in but OFF by default** — lecture audio should not be materially altered without intent. Enable it per project via `render_settings.loudnorm`, or globally with `MEDIA_LOUDNORM_ENABLED`.
+
+---
+
+## Rendering architecture
+
+```
+Browser
+   ↓
+Next.js / Vercel          UI · forms · uploads · previews · polling
+   ↓  HTTPS
+Laravel / VPS             auth · validation · private media · API
+   ↓
+Laravel queue (database)  the "media" queue
+   ↓
+FFmpeg / ffprobe          on the VPS
+   ↓
+MP4 on the private disk
+   ├── Google Drive
+   └── YouTube
+```
+
+**FFmpeg never runs on Vercel, and never inside an HTTP request.** Rendering is always dispatched to `RenderContentProjectJob` on the `media` queue; the render endpoint returns `202` immediately and the studio polls for progress.
+
+### The FFmpeg graph
+
+```
+[0:v] scale=1280:720:force_original_aspect_ratio=increase, crop, setsar, format=rgba  ← background, cover+crop
+[2:v] scale=1280:720                                                                  ← readability gradient
+      overlay
+[3:v] scale=210:76 → overlay=1022:42                                                  ← #5 branding
+      drawtext ×8 (textfile=, expansion=none)                                         ← #1 #2 #3 #4 #6 #7×2 #8
+[1:a] aresample=48000 [, loudnorm] , asplit=2 → [aout] + [awave]
+[awave] showwaves=s=640x150:mode=cline:colors=red:rate=30
+      overlay=320:540:shortest=1
+      format=yuv420p
+```
+
+How this differs from the original shell script:
+
+- **Audio is decoded and re-encoded**, never stream-copied, so any supported input yields a uniform AAC 48 kHz track. The Audacity pre-pass is no longer needed.
+- **Text comes from files**, not from the command. Each run is written to its own `.txt` and drawn with `textfile=` plus `expansion=none`, so apostrophes, colons, ampersands, Unicode and Indonesian characters are safe, and a title containing `%{pts}` stays literal.
+- **Text is measured and fitted** before rendering (GD + FreeType), so titles shrink to fit and impossible text is rejected up front instead of being silently cropped.
+- **Positioning is by baseline** (`y=<baseline>-ascent`), so differently-sized runs share a line.
+- **Duration is bounded explicitly** with `-t` plus `overlay=…:shortest=1`. `-shortest` alone does not terminate an encode whose video branch is an infinite `-loop 1` still — it will run forever.
+- **Progress is machine-readable** via `-progress pipe:1 -nostats`, throttled before it reaches the database.
+- **Nothing is interpolated into a shell.** Everything runs through Symfony Process with an argument array, and the filter graph is assembled only from template config.
+
+---
+
+## Preview parity
+
+The browser preview is not a separate implementation of the layout. `GET /api/v1/content-projects/{uuid}/preview` returns the **resolved layout** — the very structure the renderer draws from — and the preview positions elements from it inside a fixed 1280×720 canvas scaled with a CSS transform. The readability gradient is rebuilt from the same stops that generate `overlay.png`.
+
+The preview cannot drift from the render, because there is only one set of coordinates. It is still an approximation: the browser has its own fonts and text shaping. Close enough to approve a composition before spending minutes rendering.
+
+That same endpoint is the pre-render check — text that cannot be laid out comes back as a `422` the studio shows immediately.
+
+---
+
+## Content Studio routes
+
+| Route | Purpose |
+|---|---|
+| `/dashboard` | Drafts / Rendering / Ready to upload / Scheduled / Published, plus recent projects |
+| `/studio` | All content projects with per-pipeline status |
+| `/studio/new` | Create a project: topic, sequence, speaker |
+| `/studio/[uuid]` | Media upload, title fields, YouTube metadata, preview, render, playback, publish |
+| `/studio/topics` | Topics and playlist links |
+| `/studio/topics/[uuid]` | One topic and its videos, in sequence order |
+| `/settings/integrations` | Google connection and channel verification |
+
+## API endpoints
+
+All under `/api/v1`, all `auth:sanctum` unless noted, all owner-scoped (a foreign resource returns `404`, never `403`).
+
+```
+GET    /topics                              POST   /topics
+GET    /topics/{uuid}                       PATCH  /topics/{uuid}
+DELETE /topics/{uuid}
+
+GET    /speakers                            POST   /speakers
+GET    /speakers/{uuid}                     PATCH  /speakers/{uuid}
+
+GET    /content-projects                    POST   /content-projects
+GET    /content-projects/{uuid}             PATCH  /content-projects/{uuid}
+DELETE /content-projects/{uuid}
+
+GET    /content-projects/{uuid}/preview        resolved template layout
+POST   /content-projects/{uuid}/audio          ffprobe-validated upload
+POST   /content-projects/{uuid}/background     image-validated upload
+GET    /content-projects/{uuid}/background     artwork, for the preview
+
+POST   /content-projects/{uuid}/render         202, queues the render
+GET    /content-projects/{uuid}/render-status  status + progress
+GET    /content-projects/{uuid}/video          stream the MP4
+GET    /content-projects/{uuid}/download       download the MP4
+GET    /content-projects/{uuid}/media-links    short-lived signed playback URLs
+
+POST   /content-projects/{uuid}/drive          202, queues the Drive backup
+POST   /content-projects/{uuid}/youtube        202, queues the YouTube upload
+
+GET    /integrations/google                    connection status
+POST   /integrations/google/redirect           consent URL
+DELETE /integrations/google                    disconnect
+GET    /integrations/google/callback           OAuth callback (state-verified, unauthenticated)
+GET    /content-projects/{uuid}/stream         signed video delivery (unauthenticated)
+```
+
+The last two are necessarily unauthenticated. The OAuth callback is reached by a Google redirect and is bound to its user by a single-use `state`. The stream route is reached by a `<video>` element, which cannot attach a bearer token; the short-lived signature issued by `/media-links` is its authorization.
+
+---
+
+## Topics and YouTube playlists
+
+A `ContentTopic` is the lecture series. It exists so you type "Riyadhush Shalihin" once, and it carries an optional `youtube_playlist_id`:
+
+```
+Keje Topic                YouTube Playlist
+Riyadhush Shalihin   →    PLxxxxxxxxxxxx
+```
+
+Linking is **never required to render**. When a topic has a playlist and a video uploads successfully, Keje adds the video to it; a playlist failure is logged and ignored rather than failing the upload. Creating playlists from Keje is deliberately not implemented yet.
+
+## Speakers
+
+A `Speaker` is reusable across projects. The stored name keeps its natural casing — `Syafiq Riza Basalamah`. Uppercasing to `SYAFIQ RIZA BASALAMAH` is a Kajian Tematik rendering decision and never rewrites the record. An optional `display_name` overrides what is drawn without changing the canonical name.
+
+## Visual title vs YouTube title
+
+These are separate fields and are never conflated:
+
+```
+On screen   KEUTAMAAN LAPAR, HIDUP
+            SEDERHANA DAN MERASA CUKUP
+            SERTA MENGEKANG HAWA NAFSU
+
+YouTube     Keutamaan Lapar, Hidup Sederhana … | Riyadhush Shalihin #11 | Part 3
+```
+
+The studio can prefill the YouTube title from the visual fields, but it stays independently editable.
+
+---
+
+## Google setup
+
+Google Drive and YouTube use **server-side OAuth**. The client secret and the refresh token live on the Laravel host and are never sent to the browser, never stored in `localStorage`, and never exposed through the API.
+
+1. Create or select a project in the [Google Cloud console](https://console.cloud.google.com/).
+2. Enable the **Google Drive API**.
+3. Enable the **YouTube Data API v3**.
+4. Configure the OAuth consent screen (External, with your Google account as a test user).
+5. Create an OAuth client of type **Web application**.
+6. Add the redirect URI — it points at the **API**, not the frontend:
+   `https://api.yourapp.com/api/v1/integrations/google/callback`
+7. Set `GOOGLE_CLIENT_ID` in `apps/api/.env`.
+8. Set `GOOGLE_CLIENT_SECRET` in `apps/api/.env`.
+9. Set `GOOGLE_REDIRECT_URI` to exactly the URI you registered.
+10. Open **Settings → Integrations** in Keje and click **Connect Google**.
+11. Verify the channel shown matches `YOUTUBE_EXPECTED_CHANNEL_ID`. A mismatch blocks uploads.
+
+Do **not** download the credentials JSON into the repository. Only the three environment variables are needed.
+
+Scopes requested, deliberately minimal:
+
+| Scope | Why |
+|---|---|
+| `drive.file` | Only files Keje created — not your whole Drive |
+| `youtube.upload` | Upload only |
+| `youtube.readonly` | Read back the channel so it can be verified |
+
+> **YouTube API development limitation.** Google restricts uploads from unverified YouTube Data API projects to **private** visibility until an API compliance audit is completed. During development, expect uploaded videos to remain private regardless of the privacy you select. This is Google policy, not a Keje bug, and must not be worked around.
+
+### Scheduling
+
+Choose a publish time and Keje uploads the video as `private` with `publishAt` set. **YouTube performs the publication itself** — there is no cron job flipping videos public. Times are entered in your local timezone and converted to RFC 3339 UTC on the way out.
+
+---
+
+## Production deployment (VPS)
+
+The API host must have FFmpeg, fonts, a real queue driver and a worker.
+
+```bash
+# Dependencies
+sudo apt-get install -y ffmpeg fonts-dejavu-core
+ffmpeg -version
+ffprobe -version
+```
+
+After every pull:
+
+```bash
+cd apps/api
+composer install --no-dev --optimize-autoloader
+php artisan migrate --force
+php artisan optimize:clear
+php artisan config:cache
+php artisan route:cache
+php artisan media:diagnose      # verifies the whole media environment
+sudo supervisorctl restart keje-worker:*
+```
+
+`php artisan media:diagnose` checks the FFmpeg and FFprobe binaries and versions, both font files, the template definitions and their assets, private storage writability, free disk space, the queue driver, and the Google configuration. It exits non-zero when something critical is missing, so it can gate a deploy.
+
+```
+✔ FFmpeg                       ffmpeg version 6.1.1
+✔ FFprobe                      ffprobe version 6.1.1
+✔ Font (sans)                  /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+✔ Font (sans_bold)             /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf
+✔ Templates                    kajian-tematik
+✔ Private storage              …/storage/app/private/content
+✔ Disk space                   21.6 GB free
+✔ Queue                        database
+```
+
+### Queue worker
+
+Rendering **must not** use the `sync` driver — that would run FFmpeg inside a web request. `media:diagnose` fails if you try.
+
+```bash
+php artisan queue:work --queue=media,default --timeout=7200 --tries=2
+```
+
+Supervisor (`/etc/supervisor/conf.d/keje-worker.conf`):
+
+```ini
+[program:keje-worker]
+process_name=%(program_name)s_%(process_num)02d
+command=php /var/www/keje/apps/api/artisan queue:work --queue=media,default --timeout=7200 --tries=2 --sleep=3 --max-jobs=50
+directory=/var/www/keje/apps/api
+autostart=true
+autorestart=true
+user=www-data
+numprocs=1
+redirect_stderr=true
+stdout_logfile=/var/log/keje/worker.log
+stopwaitsecs=7300
+```
+
+One worker is right for a single-operator setup: renders are CPU-bound and running two in parallel makes both slower. `stopwaitsecs` must exceed the render timeout so a deploy never kills a render mid-encode.
+
+### Upload limits
+
+A lecture recording is large. All three must be at least `MEDIA_MAX_AUDIO_MB`:
+
+```ini
+; php.ini
+upload_max_filesize = 512M
+post_max_size = 512M
+max_execution_time = 300
+memory_limit = 256M
+```
+
+```nginx
+# nginx server block
+client_max_body_size 512M;
+client_body_timeout 300s;
+```
+
+Keje does not modify OS configuration — set these yourself.
+
+### Permissions
+
+```bash
+sudo chown -R www-data:www-data storage bootstrap/cache
+sudo chmod -R 775 storage bootstrap/cache
+```
+
+Source recordings and rendered videos live under `storage/app/private/content/{project-uuid}/` and are **never** served from a public directory. Rendered MP4s are kept locally after Drive/YouTube upload; automatic cleanup is deliberately left for a future sprint.
+
+---
+
+## Vercel
+
+Vercel imports the whole repository and deploys **`apps/web`** only.
+
+| Setting | Value |
+|---|---|
+| Framework | Next.js |
+| Root Directory | `apps/web` — not `web`, not `/apps/web` |
+
+Frontend environment variables:
+
+```
+NEXT_PUBLIC_APP_NAME=Keje
+NEXT_PUBLIC_API_BASE_URL=https://api.yourapp.com/api/v1
+NEXT_PUBLIC_AUTH_MODE=bearer
+API_PROXY_TARGET=https://api.yourapp.com
+```
+
+Sprint 1 adds **no new frontend environment variables**. FFmpeg runs on the VPS, not on Vercel. Google client secrets belong on the VPS, not on Vercel, and must never appear in a `NEXT_PUBLIC_*` variable.
+
+---
+
+## Security
+
+- Uploads are authenticated and owner-scoped; a foreign resource returns `404`, not `403`.
+- Media lives on a private disk, outside the web root.
+- Filenames are server-generated from the project UUID; the original name is kept only as a display label.
+- Uploads are verified with ffprobe, not by extension or browser MIME type.
+- FFmpeg runs through Symfony Process with an argument array — never a shell string.
+- User text reaches FFmpeg only through `textfile=`, with `expansion=none`.
+- The frontend cannot supply FFmpeg filters or expressions. Every graph is built from application-owned template config.
+- OAuth tokens are encrypted at rest, hidden from serialisation, and never returned by the API.
+- OAuth `state` is single-use and bound to the user who started the flow.
+- Video playback links are short-lived signatures, not permanent public URLs.
+
+---
+
+## Development status
+
+### Sprint 1
+
+- [x] Content projects
+- [x] Topics
+- [x] Speakers
+- [x] Audio upload with ffprobe validation
+- [x] Background upload with image validation
+- [x] Kajian Tematik template (all 8 elements)
+- [x] Text fitting and balanced subtitle wrapping
+- [x] Browser preview from the shared layout contract
+- [x] FFmpeg rendering on the queue
+- [x] Real render progress
+- [x] Video preview and download
+- [x] `php artisan media:diagnose`
+- [x] Google OAuth (server-side, encrypted tokens, channel verification)
+- [x] Google Drive resumable backup
+- [x] YouTube resumable upload
+- [x] YouTube scheduling (private + `publishAt`)
+- [x] Dashboard and Content Studio UI
+
+**Verified end to end** against a live API and queue worker: register → topic → speaker → project → upload MP3 → upload artwork → preview → render → poll progress → download a 1280×720 H.264/AAC MP4.
+
+**Verified with mocks only** — the Google code paths have full test coverage but have not been exercised against real Google APIs, because that needs live credentials and a real channel. Expect to shake out details on first connection.
+
+### Not in Sprint 1
+
+Creating YouTube playlists from Keje; automatic cleanup of local renders; analytics, comments and subscriber management; AI transcription, titles, summaries or chapters; subtitles and captions; Shorts; thumbnail generation; a drag-and-drop layout editor; multiple channels; cross-posting; team collaboration.
+
+The architecture leaves room for these — `TemplateRegistry` and the template directories in particular mean a second template needs no changes to `ContentProject` or the renderer — but none of them are implemented.
 
 ---
 

@@ -65,7 +65,13 @@ return [
     |
     */
 
-    'timezone' => 'UTC',
+    /*
+     * Read from the environment rather than hardcoded, so the render host's
+     * own system timezone can never change how the application behaves.
+     * Timestamps are still stored UTC; this is the timezone the app reasons in,
+     * and YouTube publish times are converted to RFC 3339 UTC on the way out.
+     */
+    'timezone' => env('APP_TIMEZONE', 'UTC'),
 
     /*
     |--------------------------------------------------------------------------

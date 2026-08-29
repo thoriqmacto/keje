@@ -94,13 +94,16 @@ apps/web/
 │   │       └── VerifyEmailClient.tsx
 │   ├── (app)/                 Authenticated route group
 │   │   ├── layout.tsx         Waits for AuthProvider, redirects if anon
-│   │   ├── dashboard/page.tsx Proof-of-install page
+│   │   ├── dashboard/page.tsx Workflow counts + recent projects
 │   │   ├── settings/          Profile, password, email verification banner
 │   │   │   ├── page.tsx
-│   │   │   └── SettingsClient.tsx
-│   │   └── notes/             Example resource — safe to delete
-│   │       ├── page.tsx
-│   │       └── NotesClient.tsx (SWR list, create, optimistic delete)
+│   │   │   ├── SettingsClient.tsx
+│   │   │   └── integrations/  Google connection + channel verification
+│   │   └── studio/            Content Studio
+│   │       ├── page.tsx       Project list
+│   │       ├── new/           Create: topic, sequence, speaker
+│   │       ├── [id]/          Media, title fields, preview, render, publish
+│   │       └── topics/        Topics and their videos
 │   ├── api/[...path]/         Same-origin proxy to the Laravel API
 │   ├── layout.tsx             Root layout (fonts, <Providers>)
 │   ├── providers.tsx          AuthProvider + sonner Toaster
@@ -158,23 +161,52 @@ scripts/
 
 ---
 
-## Example resource (Notes)
+## Media pipeline
 
-A complete demo of the authenticated CRUD pattern. Copy as a template, or remove by deleting:
+Everything rendering-related lives under `apps/api`:
 
-**Backend**
-- `apps/api/database/migrations/*_create_notes_table.php`
-- `apps/api/app/Models/Note.php`
-- `apps/api/app/Http/Controllers/Api/V1/NoteController.php`
-- `apps/api/app/Http/Requests/Api/V1/StoreNoteRequest.php`
-- `apps/api/database/factories/NoteFactory.php`
-- `apps/api/tests/Feature/Notes/`
-- The `apiResource('notes', ...)` line in `routes/api.php`
+```
+app/
+├── Enums/                          RenderStatus, DriveStatus, YouTubeStatus, RenderJobStatus
+├── Jobs/
+│   ├── RenderContentProjectJob     queue orchestration + progress + state transitions
+│   ├── UploadVideoToGoogleDriveJob resumable Drive backup
+│   └── UploadVideoToYouTubeJob     resumable YouTube upload
+├── Services/
+│   ├── Media/
+│   │   ├── TemplateRegistry        loads template definitions by key
+│   │   ├── TextLayoutService       fits titles, wraps subtitles, resolves the layout
+│   │   ├── FontMetrics             GD/FreeType text measurement
+│   │   ├── FfprobeService          structural validation of uploads
+│   │   ├── FfmpegService           safe process execution + progress parsing
+│   │   ├── VideoRenderer           builds and runs the render
+│   │   └── MediaStorage            server-controlled paths on the private disk
+│   └── Google/
+│       ├── GoogleClientFactory     configured clients + token refresh
+│       ├── GoogleOAuthService      consent, state, connection lifecycle
+│       ├── GoogleDriveService      chunked upload
+│       └── YouTubeService          chunked upload, scheduling, channel check
+└── Console/Commands/
+    └── MediaDiagnoseCommand        php artisan media:diagnose
 
-**Frontend**
-- `apps/web/app/(app)/notes/`
-- The `/notes` entry in `PROTECTED_PREFIXES` and the `matcher` array in `apps/web/middleware.ts`
-- The `<Link href="/notes">` in `apps/web/app/(app)/layout.tsx`
+resources/media/templates/kajian-tematik/
+├── template.php                    geometry + typography (the only source of coordinates)
+├── branding.png                    #5 wordmark
+├── overlay.png                     readability gradient
+└── build-assets.php                regenerates both PNGs
+```
+
+Per-project media on the private disk:
+
+```
+storage/app/private/content/{project-uuid}/
+├── source/     audio.*  background.*        server-named, never client-named
+├── text/       one .txt per drawn run       read by drawtext via textfile=
+├── renders/    output.mp4                   served only via authenticated/signed routes
+└── temp/       in-progress encode           promoted to renders/ only on success
+```
+
+**Adding a template** — create `resources/media/templates/<key>/template.php` plus its assets. No changes to models, controllers or the renderer.
 
 ---
 

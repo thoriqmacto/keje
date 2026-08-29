@@ -1,0 +1,566 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import useSWR from "swr";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import {
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
+} from "@/components/ui/card";
+import { KajianTematikPreview } from "@/components/studio/kajian-tematik-preview";
+import {
+    MediaUploader,
+    audioDetails,
+    backgroundDetails,
+} from "@/components/studio/media-uploader";
+import { RenderProgress, useRenderStatus } from "@/components/studio/render-progress";
+import { ProjectStatusBadge } from "@/components/studio/status-badge";
+import { TemplateTextForm } from "@/components/studio/template-text-form";
+import { YouTubeMetadataForm } from "@/components/studio/youtube-form";
+import {
+    apiErrorMessage,
+    backupToDrive,
+    deleteProject,
+    getPreview,
+    getProject,
+    startRender,
+    studioKeys,
+    updateProject,
+    uploadAudio,
+    uploadBackground,
+    uploadToYouTube,
+} from "@/lib/studio/api";
+import { formatBytes, formatDateTime, formatDuration } from "@/lib/studio/format";
+import { getMediaLinks, useAuthedObjectUrl, type MediaLinks } from "@/lib/studio/media";
+import type { YouTubeMetadata } from "@/lib/types/studio";
+
+export default function ProjectDetailClient({ projectId }: { projectId: string }) {
+    const router = useRouter();
+
+    const {
+        data: project,
+        isLoading,
+        mutate,
+    } = useSWR(studioKeys.project(projectId), () => getProject(projectId));
+
+    const render = useRenderStatus(projectId, project?.render.status ?? "draft");
+    const renderStatus = render.data?.status ?? project?.render.status ?? "draft";
+
+    // Template text is edited locally and saved explicitly, so typing does not
+    // fire a request per keystroke.
+    const [primaryTitle, setPrimaryTitle] = useState("");
+    const [subtitle, setSubtitle] = useState("");
+    const [partNumber, setPartNumber] = useState("");
+    const [metadata, setMetadata] = useState<YouTubeMetadata>({});
+    const [savingText, setSavingText] = useState(false);
+    const [savingMeta, setSavingMeta] = useState(false);
+    const [links, setLinks] = useState<MediaLinks | null>(null);
+
+    useEffect(() => {
+        if (!project) return;
+        setPrimaryTitle(project.primary_title ?? "");
+        setSubtitle(project.subtitle ?? "");
+        setPartNumber(project.part_number?.toString() ?? "");
+        setMetadata(project.youtube.metadata ?? {});
+    }, [project]);
+
+    const backgroundUrl = useAuthedObjectUrl(
+        project?.background_image ? `/content-projects/${projectId}/background` : null,
+    );
+
+    // The resolved layout doubles as validation: a 422 here is what the user
+    // needs to see before spending minutes on a render.
+    const { data: layout, error: layoutError } = useSWR(
+        project ? studioKeys.preview(projectId) : null,
+        () => getPreview(projectId),
+    );
+
+    const layoutMessage = layoutError
+        ? apiErrorMessage(layoutError, "This text cannot be laid out on the template.")
+        : null;
+
+    // Refresh the project once a render settles so output size/links appear.
+    useEffect(() => {
+        if (renderStatus === "rendered" || renderStatus === "failed") {
+            void mutate();
+        }
+    }, [renderStatus, mutate]);
+
+    useEffect(() => {
+        if (project?.render.has_output) {
+            getMediaLinks(projectId).then(setLinks).catch(() => setLinks(null));
+        } else {
+            setLinks(null);
+        }
+    }, [project?.render.has_output, projectId, project?.render.rendered_at]);
+
+    const suggestedYouTubeTitle = useMemo(() => {
+        if (!project) return "";
+
+        const parts = [
+            [primaryTitle, subtitle].filter(Boolean).join(" "),
+            project.topic
+                ? `${project.topic.name}${project.topic_sequence ? ` #${project.topic_sequence}` : ""}`
+                : null,
+            project.part_number ? `Part ${project.part_number}` : null,
+        ].filter(Boolean);
+
+        return parts.join(" | ").slice(0, 100);
+    }, [project, primaryTitle, subtitle]);
+
+    async function saveText() {
+        setSavingText(true);
+        try {
+            await updateProject(projectId, {
+                primary_title: primaryTitle || null,
+                subtitle: subtitle || null,
+                part_number: partNumber ? Number(partNumber) : null,
+            });
+            await mutate();
+            toast.success("Title information saved.");
+        } catch (error) {
+            toast.error(apiErrorMessage(error, "Could not save the title information."));
+        } finally {
+            setSavingText(false);
+        }
+    }
+
+    async function saveMetadata() {
+        setSavingMeta(true);
+        try {
+            await updateProject(projectId, { youtube_metadata: metadata });
+            await mutate();
+            toast.success("YouTube metadata saved.");
+        } catch (error) {
+            toast.error(apiErrorMessage(error, "Could not save the YouTube metadata."));
+        } finally {
+            setSavingMeta(false);
+        }
+    }
+
+    async function onRender() {
+        try {
+            await startRender(projectId);
+            toast.success("Render queued.");
+            await Promise.all([mutate(), render.mutate()]);
+        } catch (error) {
+            toast.error(apiErrorMessage(error, "Could not queue the render."));
+        }
+    }
+
+    async function onDelete() {
+        try {
+            await deleteProject(projectId);
+            toast.success("Project deleted.");
+            router.push("/studio");
+        } catch (error) {
+            toast.error(apiErrorMessage(error, "Could not delete the project."));
+        }
+    }
+
+    if (isLoading || !project) {
+        return (
+            <div className="mx-auto w-full max-w-6xl px-4 py-10 text-sm text-muted-foreground">
+                Loading…
+            </div>
+        );
+    }
+
+    const inFlight = renderStatus === "queued" || renderStatus === "rendering";
+
+    return (
+        <section className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-10">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+                <div className="flex flex-col gap-1">
+                    <Link href="/studio" className="text-xs text-muted-foreground hover:underline">
+                        ← Content Studio
+                    </Link>
+                    <h1 className="text-3xl font-semibold tracking-tight">
+                        {project.working_title}
+                    </h1>
+                    <p className="text-sm text-muted-foreground">
+                        {project.topic?.name ?? "No topic"}
+                        {project.topic_sequence ? ` · TEMA #${project.topic_sequence}` : ""}
+                        {project.speaker ? ` · ${project.speaker.name}` : ""}
+                    </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                    <ProjectStatusBadge
+                        pipeline="render"
+                        status={project.render.status}
+                        label={project.render.label}
+                    />
+                    <ProjectStatusBadge
+                        pipeline="drive"
+                        status={project.drive.status}
+                        label={`Drive: ${project.drive.label}`}
+                    />
+                    <ProjectStatusBadge
+                        pipeline="youtube"
+                        status={project.youtube.status}
+                        label={`YouTube: ${project.youtube.label}`}
+                    />
+                </div>
+            </div>
+
+            <div className="grid gap-6 lg:grid-cols-[1.15fr_1fr]">
+                {/* ── Preview ────────────────────────────────────────────── */}
+                <div className="flex flex-col gap-4">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Kajian Tematik preview</CardTitle>
+                            <CardDescription>
+                                Approximation of the rendered frame, positioned from the same
+                                template layout FFmpeg uses.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent className="flex flex-col gap-3">
+                            {layout ? (
+                                <KajianTematikPreview
+                                    layout={layout}
+                                    backgroundUrl={backgroundUrl}
+                                />
+                            ) : layoutMessage ? (
+                                <p className="rounded-md bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400">
+                                    {layoutMessage}
+                                </p>
+                            ) : (
+                                <p className="text-sm text-muted-foreground">Building preview…</p>
+                            )}
+                        </CardContent>
+                    </Card>
+
+                    {/* ── Render ─────────────────────────────────────────── */}
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Render</CardTitle>
+                            <CardDescription>
+                                Runs on the Laravel queue with FFmpeg. You can leave this page.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent className="flex flex-col gap-4">
+                            <RenderProgress
+                                status={renderStatus}
+                                progress={render.data?.progress ?? 0}
+                            />
+
+                            {project.render.error && (
+                                <div className="rounded-md bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400">
+                                    <p className="font-medium">Render failed</p>
+                                    <p>{project.render.error}</p>
+                                </div>
+                            )}
+
+                            {!project.is_renderable && (
+                                <p className="text-sm text-muted-foreground">
+                                    Upload the lecture audio and a background image, and enter a
+                                    primary title, to enable rendering.
+                                </p>
+                            )}
+
+                            <div className="flex flex-wrap gap-2">
+                                <Button
+                                    onClick={() => void onRender()}
+                                    disabled={inFlight || !project.is_renderable}
+                                >
+                                    {inFlight
+                                        ? "Rendering…"
+                                        : project.render.status === "rendered"
+                                          ? "Render again"
+                                          : project.render.status === "failed"
+                                            ? "Retry render"
+                                            : "Render video"}
+                                </Button>
+
+                                {links?.download_url && (
+                                    <Button asChild variant="outline">
+                                        <a href={links.download_url}>Download MP4</a>
+                                    </Button>
+                                )}
+                            </div>
+
+                            {project.render.has_output && (
+                                <dl className="grid grid-cols-2 gap-x-4 gap-y-1 border-t pt-3 text-xs">
+                                    <dt className="text-muted-foreground">Rendered</dt>
+                                    <dd>{formatDateTime(project.render.rendered_at)}</dd>
+                                    <dt className="text-muted-foreground">Size</dt>
+                                    <dd className="font-mono">
+                                        {formatBytes(project.render.output_size)}
+                                    </dd>
+                                    <dt className="text-muted-foreground">Duration</dt>
+                                    <dd className="font-mono">
+                                        {formatDuration(project.render.output_duration)}
+                                    </dd>
+                                    <dt className="text-muted-foreground">Attempts</dt>
+                                    <dd className="font-mono">{project.render.attempts}</dd>
+                                </dl>
+                            )}
+
+                            {links?.video_url && (
+                                // Signed URL, so the element can stream with
+                                // range requests instead of buffering a blob.
+                                <video
+                                    key={links.video_url}
+                                    controls
+                                    preload="metadata"
+                                    className="w-full rounded-lg border bg-black"
+                                    src={links.video_url}
+                                />
+                            )}
+                        </CardContent>
+                    </Card>
+                </div>
+
+                {/* ── Editing ────────────────────────────────────────────── */}
+                <div className="flex flex-col gap-4">
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Media</CardTitle>
+                            <CardDescription>
+                                Upload the original recording — no Audacity step needed. The
+                                background should be clean artwork with no title text.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent className="flex flex-col gap-4">
+                            <MediaUploader
+                                label="Lecture audio"
+                                accept=".mp3,.mpeg,.mpg,.m4a,.wav,.aac,audio/*"
+                                hint="MP3, MPEG, M4A, WAV or AAC."
+                                detected={audioDetails(project)}
+                                onUpload={async (file, onProgress) => {
+                                    const updated = await uploadAudio(projectId, file, onProgress);
+                                    await mutate();
+                                    return updated;
+                                }}
+                            />
+                            <MediaUploader
+                                label="Background image"
+                                accept=".jpg,.jpeg,.png,.webp,image/*"
+                                hint="JPG, PNG or WebP. Cropped to fill 1280×720."
+                                detected={backgroundDetails(project)}
+                                onUpload={async (file, onProgress) => {
+                                    const updated = await uploadBackground(
+                                        projectId,
+                                        file,
+                                        onProgress,
+                                    );
+                                    await mutate();
+                                    return updated;
+                                }}
+                            />
+                        </CardContent>
+                    </Card>
+
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Kajian Tematik title</CardTitle>
+                            <CardDescription>
+                                Type in normal case — the template uppercases it.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <TemplateTextForm
+                                primaryTitle={primaryTitle}
+                                subtitle={subtitle}
+                                partNumber={partNumber}
+                                layoutError={layoutMessage}
+                                saving={savingText}
+                                onChange={(patch) => {
+                                    if (patch.primaryTitle !== undefined)
+                                        setPrimaryTitle(patch.primaryTitle);
+                                    if (patch.subtitle !== undefined) setSubtitle(patch.subtitle);
+                                    if (patch.partNumber !== undefined)
+                                        setPartNumber(patch.partNumber);
+                                }}
+                                onSave={() => void saveText()}
+                            />
+                        </CardContent>
+                    </Card>
+
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>YouTube metadata</CardTitle>
+                            <CardDescription>
+                                Saved with the project. Google does not need to be connected to
+                                render.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <YouTubeMetadataForm
+                                metadata={metadata}
+                                saving={savingMeta}
+                                onChange={(patch) =>
+                                    setMetadata((current) => ({ ...current, ...patch }))
+                                }
+                                onSave={() => void saveMetadata()}
+                                onPrefill={() =>
+                                    setMetadata((current) => ({
+                                        ...current,
+                                        title: suggestedYouTubeTitle,
+                                    }))
+                                }
+                            />
+                        </CardContent>
+                    </Card>
+
+                    <PublicationCard
+                        project={project}
+                        onDrive={async () => {
+                            try {
+                                await backupToDrive(projectId);
+                                toast.success("Google Drive backup queued.");
+                                await mutate();
+                            } catch (error) {
+                                toast.error(
+                                    apiErrorMessage(error, "Could not queue the Drive backup."),
+                                );
+                            }
+                        }}
+                        onYouTube={async () => {
+                            try {
+                                await uploadToYouTube(projectId, metadata);
+                                toast.success("YouTube upload queued.");
+                                await mutate();
+                            } catch (error) {
+                                toast.error(
+                                    apiErrorMessage(error, "Could not queue the YouTube upload."),
+                                );
+                            }
+                        }}
+                    />
+
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Danger zone</CardTitle>
+                            <CardDescription>
+                                Deletes the project, its source media and any renders.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <Button variant="outline" onClick={() => void onDelete()}>
+                                Delete project
+                            </Button>
+                        </CardContent>
+                    </Card>
+                </div>
+            </div>
+        </section>
+    );
+}
+
+/** Drive and YouTube — independent pipelines, each with its own next action. */
+function PublicationCard({
+    project,
+    onDrive,
+    onYouTube,
+}: {
+    project: import("@/lib/types/studio").ContentProject;
+    onDrive: () => Promise<void>;
+    onYouTube: () => Promise<void>;
+}) {
+    const rendered = project.render.has_output;
+
+    return (
+        <Card>
+            <CardHeader>
+                <CardTitle>Backup and publish</CardTitle>
+                <CardDescription>
+                    Independent of each other — a failed Drive backup never invalidates the render.
+                </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-5">
+                <div className="flex flex-col gap-2">
+                    <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-medium">Google Drive</span>
+                        <ProjectStatusBadge
+                            pipeline="drive"
+                            status={project.drive.status}
+                            label={project.drive.label}
+                        />
+                    </div>
+                    {project.drive.error && (
+                        <p className="text-xs text-red-600 dark:text-red-400">
+                            {project.drive.error}
+                        </p>
+                    )}
+                    <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={!rendered}
+                            onClick={() => void onDrive()}
+                        >
+                            {project.drive.status === "failed"
+                                ? "Retry backup"
+                                : "Back up to Drive"}
+                        </Button>
+                        {project.drive.web_view_link && (
+                            <a
+                                href={project.drive.web_view_link}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-xs underline"
+                            >
+                                Open in Drive
+                            </a>
+                        )}
+                    </div>
+                </div>
+
+                <div className="flex flex-col gap-2 border-t pt-4">
+                    <div className="flex items-center justify-between gap-2">
+                        <span className="text-sm font-medium">YouTube</span>
+                        <ProjectStatusBadge
+                            pipeline="youtube"
+                            status={project.youtube.status}
+                            label={project.youtube.label}
+                        />
+                    </div>
+                    {project.youtube.error && (
+                        <p className="text-xs text-red-600 dark:text-red-400">
+                            {project.youtube.error}
+                        </p>
+                    )}
+                    {project.youtube.publish_at && (
+                        <p className="text-xs text-muted-foreground">
+                            Scheduled for {formatDateTime(project.youtube.publish_at)}
+                        </p>
+                    )}
+                    <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={!rendered}
+                            onClick={() => void onYouTube()}
+                        >
+                            {project.youtube.status === "failed"
+                                ? "Retry upload"
+                                : "Upload to YouTube"}
+                        </Button>
+                        {project.youtube.url && (
+                            <a
+                                href={project.youtube.url}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="text-xs underline"
+                            >
+                                {project.youtube.url}
+                            </a>
+                        )}
+                    </div>
+                    {!rendered && (
+                        <p className="text-xs text-muted-foreground">
+                            Render the video first.
+                        </p>
+                    )}
+                </div>
+            </CardContent>
+        </Card>
+    );
+}

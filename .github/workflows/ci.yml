@@ -109,10 +109,16 @@ jobs:
         with:
           node-version: '22'
           cache: npm
-          cache-dependency-path: apps/web/package-lock.json
+          # npm workspaces keeps a single lockfile at the repo root; there has
+          # never been one in apps/web, so pointing here failed the whole job
+          # before lint, typecheck or build ever ran.
+          cache-dependency-path: package-lock.json
 
+      # Installed from the root so the whole workspace resolves. Binaries are
+      # hoisted to the root node_modules and stay on PATH for the apps/web steps.
       - name: Install dependencies
         run: npm ci
+        working-directory: .
 
       # next build type-checks too, but running tsc first gives the whole list
       # of type errors instead of only the one the build dies on.

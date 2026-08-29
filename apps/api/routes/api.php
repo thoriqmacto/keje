@@ -1,7 +1,13 @@
 <?php
 
 use App\Http\Controllers\Api\V1\AuthController;
-use App\Http\Controllers\Api\V1\NoteController;
+use App\Http\Controllers\Api\V1\ContentProjectController;
+use App\Http\Controllers\Api\V1\ContentTopicController;
+use App\Http\Controllers\Api\V1\GoogleIntegrationController;
+use App\Http\Controllers\Api\V1\ProjectMediaController;
+use App\Http\Controllers\Api\V1\ProjectPublicationController;
+use App\Http\Controllers\Api\V1\ProjectRenderController;
+use App\Http\Controllers\Api\V1\SpeakerController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/ping', fn () => response()->json([
@@ -11,6 +17,24 @@ Route::get('/ping', fn () => response()->json([
 ]));
 
 Route::prefix('v1')->group(function () {
+    /*
+     * Signed video delivery. Deliberately outside auth:sanctum — a <video>
+     * element cannot attach a bearer token. The signature issued by
+     * /media-links is the authorization, and `signed` rejects anything
+     * tampered with or expired.
+     */
+    Route::get('/content-projects/{project}/stream', [ProjectRenderController::class, 'stream'])
+        ->middleware('signed')
+        ->name('content-projects.stream');
+
+    /*
+     * Google OAuth callback. Necessarily unauthenticated — Google redirects the
+     * browser straight here — so the single-use `state` parameter is what binds
+     * the callback to the user who started the flow.
+     */
+    Route::get('/integrations/google/callback', [GoogleIntegrationController::class, 'callback'])
+        ->name('google.callback');
+
     Route::middleware('throttle:auth')->group(function () {
         Route::post('/register', [AuthController::class, 'register']);
         Route::post('/login', [AuthController::class, 'login']);
@@ -32,8 +56,53 @@ Route::prefix('v1')->group(function () {
         Route::post('/email/verification-notification', [AuthController::class, 'sendVerificationEmail'])
             ->middleware('throttle:auth');
 
-        // Example resource — safe to remove. See NoteController.
-        Route::apiResource('notes', NoteController::class)
-            ->only(['index', 'store', 'destroy']);
+        // ── Content Studio ────────────────────────────────────────────────
+        // Topics group projects into a lecture series and later map to a
+        // YouTube playlist.
+        Route::apiResource('topics', ContentTopicController::class)
+            ->parameters(['topics' => 'topic']);
+
+        // Reusable speakers, so the name is typed once.
+        Route::apiResource('speakers', SpeakerController::class)
+            ->only(['index', 'store', 'show', 'update'])
+            ->parameters(['speakers' => 'speaker']);
+
+        Route::apiResource('content-projects', ContentProjectController::class)
+            ->parameters(['content-projects' => 'project']);
+
+        Route::prefix('content-projects/{project}')->group(function () {
+            // Resolved template layout — drives the browser preview and
+            // rejects text that cannot be laid out.
+            Route::get('/preview', [ContentProjectController::class, 'preview']);
+
+            // Source media. ffprobe validates these, not the file extension.
+            Route::post('/audio', [ProjectMediaController::class, 'storeAudio']);
+            Route::post('/background', [ProjectMediaController::class, 'storeBackground']);
+
+            // Rendering is always queued; FFmpeg never runs in a request.
+            Route::post('/render', [ProjectRenderController::class, 'store']);
+            Route::get('/render-status', [ProjectRenderController::class, 'status']);
+
+            // The rendered MP4, served only to its owner.
+            Route::get('/video', [ProjectRenderController::class, 'video']);
+            Route::get('/download', [ProjectRenderController::class, 'download']);
+
+            // Short-lived signed URLs so <video> can stream with range
+            // requests, which it cannot do with a bearer token.
+            Route::get('/media-links', [ProjectRenderController::class, 'mediaLinks']);
+
+            // Uploaded artwork, for the studio preview.
+            Route::get('/background', [ProjectRenderController::class, 'background']);
+
+            // Publication. Independent of each other and of the render, and
+            // both explicitly triggered — rendering never publishes anything.
+            Route::post('/drive', [ProjectPublicationController::class, 'drive']);
+            Route::post('/youtube', [ProjectPublicationController::class, 'youtube']);
+        });
+
+        // Google connection status and lifecycle.
+        Route::get('/integrations/google', [GoogleIntegrationController::class, 'show']);
+        Route::post('/integrations/google/redirect', [GoogleIntegrationController::class, 'redirect']);
+        Route::delete('/integrations/google', [GoogleIntegrationController::class, 'destroy']);
     });
 });

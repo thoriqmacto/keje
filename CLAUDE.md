@@ -1,13 +1,15 @@
 # CLAUDE.md — Agent guidance for this repo
 
-You (the agent) are working on a **reusable Laravel + Next.js monorepo starter**. The shipped baseline must always keep working: public `/` → `/login` or `/register` → authenticated `/dashboard` talking to a live Laravel API via bearer token.
+You (the agent) are working on **Keje**, a personal YouTube content-production and publishing workflow app, built on a Laravel + Next.js monorepo. The shipped baseline must always keep working: public `/` → `/login` or `/register` → authenticated `/dashboard` talking to a live Laravel API via bearer token, and the Content Studio must be able to take a lecture recording plus artwork to a rendered MP4.
 
 ## Read first
 
-- `README.md` — quickstart, setup modes, auth modes, troubleshooting.
-- `STRUCTURE.md` — directory layout and conventions.
+- `README.md` — the product, the Kajian Tematik template, the media pipeline, deployment.
+- `STRUCTURE.md` — directory layout, the media pipeline map, conventions.
 - `scripts/setup.mjs` — the one-shot installer users invoke via `npm run setup`.
 - `apps/api/routes/api.php` — every HTTP contract lives here.
+- `apps/api/resources/media/templates/kajian-tematik/template.php` — all template geometry.
+- `apps/api/app/Services/Media/` — layout, ffprobe, FFmpeg, rendering.
 - `apps/web/lib/auth/` — auth adapters; understand this before touching login/logout.
 - `apps/web/components/auth-provider.tsx` — one source of truth for client-side auth state.
 
@@ -54,10 +56,24 @@ You (the agent) are working on a **reusable Laravel + Next.js monorepo starter**
 | New form request | `apps/api/app/Http/Requests/Api/V1/<Name>Request.php` |
 | New auth method | `apps/web/lib/auth/adapters/<name>.ts` + wire in `lib/auth/index.ts` |
 | New setup prompt | `scripts/setup.mjs` (prompt helper) + add the env key to `.env.example` |
+| New video template | `apps/api/resources/media/templates/<key>/template.php` + assets. Nothing else changes. |
+| New render setting | `config/media.php` + the env key in `.env.example`. Never a magic number in a service. |
 
-## Copying the Notes example
+## Copying the Topics/Speakers pattern
 
-`notes` is the canonical CRUD template in this repo. When building a new resource, copy that pattern end-to-end: migration with `foreignId('user_id')`, model with `$fillable` excluding `user_id`, controller that uses `$model->user()->associate($request->user())` to attach the owner, form request for validation, feature test covering 401 / index-scope / store / validation / delete-self / delete-other. On the frontend: a page in `(app)/<slug>/` using SWR for reads and `api` for writes, with optimistic deletes.
+`ContentTopic` and `Speaker` are the canonical CRUD resources now that the Notes demo is gone. When building a new one, copy that pattern end-to-end: migration with `uuid` + `foreignId('user_id')`, model using `HasUuid` (so routes bind on the UUID and integer ids stay internal) with `$fillable` excluding `user_id`, a policy, a controller that uses `$model->user()->associate($request->user())` and `abort_unless(..., 404)` for foreign records, a form request, an API Resource, and a feature test covering 401 / index-scope / store / validation / foreign-access-404. On the frontend: a page in `(app)/<slug>/` using SWR for reads and `@/lib/studio/api` for writes.
+
+## Media rules
+
+- **FFmpeg never runs in an HTTP request.** Rendering goes to `RenderContentProjectJob` on the `media` queue. The endpoint returns 202.
+- **Never interpolate user text into a command or a filter graph.** Text runs are written to `.txt` files and drawn with `textfile=` plus `expansion=none`. Symfony Process with an argument array, never a shell string.
+- **Never let a request supply an FFmpeg filter, expression or option.** Every graph is assembled from template config and `config/media.php`.
+- **All template geometry lives in `template.php`.** No coordinates in services, controllers or components.
+- **The browser preview must consume the API's resolved layout**, never its own coordinates — that is the only thing keeping preview and render in sync.
+- **Text that does not fit is refused, never cropped.** Titles are one line, subtitles at most two.
+- **Trust ffprobe, not the extension or the browser MIME type.**
+- **The three pipelines are independent.** A Drive or YouTube failure must only ever touch its own `drive_*` / `youtube_*` columns.
+- **Google tokens are encrypted, hidden, and never serialised into a response.** Secrets stay on the API host — never a `NEXT_PUBLIC_*` variable.
 
 ## Smoke test (for any PR you touch)
 
@@ -65,7 +81,9 @@ You (the agent) are working on a **reusable Laravel + Next.js monorepo starter**
 npm install
 npm run setup --non-interactive --mode=local --auth-mode=bearer
 npm run -w apps/web lint && npm run -w apps/web typecheck && npm run -w apps/web build
-cd apps/api && php artisan test
+cd apps/api && php artisan test && ./vendor/bin/pint --test
 ```
 
 All must pass. CI enforces the same matrix.
+
+If you touched anything under `app/Services/Media/` or a template definition, also run `php artisan media:diagnose`, and render the fixture to look at an actual frame — the layout tests prove the maths, not that the composition looks right.
