@@ -28,12 +28,17 @@ Route::prefix('v1')->group(function () {
         ->name('content-projects.stream');
 
     /*
-     * Google OAuth callback. Necessarily unauthenticated — Google redirects the
-     * browser straight here — so the single-use `state` parameter is what binds
-     * the callback to the user who started the flow.
+     * Google OAuth callbacks, one per service. Necessarily unauthenticated —
+     * Google redirects the browser straight here — so the single-use `state`
+     * parameter is what binds each callback to the user who started the flow.
+     * State is service-scoped, so a YouTube state is not accepted here by the
+     * Drive callback or the other way round.
      */
-    Route::get('/integrations/google/callback', [GoogleIntegrationController::class, 'callback'])
-        ->name('google.callback');
+    Route::get('/integrations/youtube/callback', [GoogleIntegrationController::class, 'callbackYouTube'])
+        ->name('google.youtube.callback');
+
+    Route::get('/integrations/drive/callback', [GoogleIntegrationController::class, 'callbackDrive'])
+        ->name('google.drive.callback');
 
     Route::middleware('throttle:auth')->group(function () {
         Route::post('/register', [AuthController::class, 'register']);
@@ -100,9 +105,14 @@ Route::prefix('v1')->group(function () {
             Route::post('/youtube', [ProjectPublicationController::class, 'youtube']);
         });
 
-        // Google connection status and lifecycle.
+        // Google connection status: both services in one payload.
         Route::get('/integrations/google', [GoogleIntegrationController::class, 'show']);
-        Route::post('/integrations/google/redirect', [GoogleIntegrationController::class, 'redirect']);
-        Route::delete('/integrations/google', [GoogleIntegrationController::class, 'destroy']);
+
+        // Separate lifecycles. Connecting or dropping one never touches the other.
+        Route::post('/integrations/youtube/redirect', [GoogleIntegrationController::class, 'redirectYouTube']);
+        Route::delete('/integrations/youtube', [GoogleIntegrationController::class, 'destroyYouTube']);
+
+        Route::post('/integrations/drive/redirect', [GoogleIntegrationController::class, 'redirectDrive']);
+        Route::delete('/integrations/drive', [GoogleIntegrationController::class, 'destroyDrive']);
     });
 });

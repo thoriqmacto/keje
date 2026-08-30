@@ -2,6 +2,8 @@
 
 namespace App\Console\Commands;
 
+use App\Enums\GoogleService;
+use App\Services\Google\GoogleClientFactory;
 use App\Services\Media\FfmpegService;
 use App\Services\Media\FfprobeService;
 use App\Services\Media\TemplateRegistry;
@@ -31,6 +33,7 @@ class MediaDiagnoseCommand extends Command
         FfmpegService $ffmpeg,
         FfprobeService $ffprobe,
         TemplateRegistry $templates,
+        GoogleClientFactory $clients,
     ): int {
         $this->newLine();
         $this->line('<options=bold>Keje media environment</>');
@@ -42,7 +45,7 @@ class MediaDiagnoseCommand extends Command
         $this->checkTemplates($templates);
         $this->checkStorage();
         $this->checkQueue();
-        $this->checkGoogle();
+        $this->checkGoogle($clients);
 
         $this->newLine();
 
@@ -165,20 +168,20 @@ class MediaDiagnoseCommand extends Command
         $this->good('Render timeout', config('media.render_timeout').'s');
     }
 
-    private function checkGoogle(): void
+    private function checkGoogle(GoogleClientFactory $clients): void
     {
-        $configured = filled(config('services.google.client_id'))
-            && filled(config('services.google.client_secret'))
-            && filled(config('services.google.redirect_uri'));
-
-        if (! $configured) {
-            // Optional: rendering works fine without Google.
-            $this->caution('Google', 'not configured — Drive backup and YouTube upload are unavailable');
-
-            return;
+        // Two independent OAuth clients: report them independently, because
+        // either one can be usable while the other is not configured.
+        foreach (GoogleService::cases() as $service) {
+            $clients->isConfigured($service)
+                ? $this->good($service->label(), 'OAuth client configured')
+                : $this->caution(
+                    $service->label(),
+                    'not configured — set '.$service->envPrefix().'_CLIENT_ID, '
+                        .$service->envPrefix().'_CLIENT_SECRET and '
+                        .$service->envPrefix().'_REDIRECT_URI',
+                );
         }
-
-        $this->good('Google', 'client configured');
 
         $expected = config('services.youtube.expected_channel_id');
 

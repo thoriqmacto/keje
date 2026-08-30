@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Enums\DriveStatus;
+use App\Enums\GoogleService;
 use App\Enums\YouTubeStatus;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\UploadToYouTubeRequest;
@@ -33,7 +34,7 @@ class ProjectPublicationController extends Controller
     {
         abort_unless($request->user()->can('update', $project), 404);
 
-        $this->assertConnected();
+        $this->assertConnected(GoogleService::Drive);
         $this->assertRendered($project);
 
         $claimed = DB::transaction(function () use ($project): bool {
@@ -70,7 +71,7 @@ class ProjectPublicationController extends Controller
     {
         abort_unless($request->user()->can('update', $project), 404);
 
-        $this->assertConnected();
+        $this->assertConnected(GoogleService::YouTube);
         $this->assertRendered($project);
 
         // Uploading twice would create a second real video on the channel.
@@ -124,17 +125,23 @@ class ProjectPublicationController extends Controller
         ], 202);
     }
 
-    private function assertConnected(): void
+    /**
+     * Require only the service this pipeline actually uses.
+     *
+     * A missing Drive connection must never block a YouTube upload, and a
+     * missing YouTube connection must never block a Drive backup.
+     */
+    private function assertConnected(GoogleService $service): void
     {
-        if (! $this->clients->isConfigured()) {
+        if (! $this->clients->isConfigured($service)) {
             throw ValidationException::withMessages([
-                'google' => ['Google is not configured on the server.'],
+                'google' => [$service->label().' is not configured on the server.'],
             ]);
         }
 
-        if (request()->user()->googleConnection === null) {
+        if (request()->user()->googleConnectionFor($service) === null) {
             throw ValidationException::withMessages([
-                'google' => ['Connect Google from Settings → Integrations first.'],
+                'google' => ['Connect '.$service->label().' from Settings → Integrations first.'],
             ]);
         }
     }

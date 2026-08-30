@@ -40,26 +40,31 @@ return [
     | Google (Drive + YouTube Data API v3)
     |--------------------------------------------------------------------------
     |
-    | Server-side OAuth only. The client secret lives here on the API host and
-    | must never be exposed to the Next.js app or any NEXT_PUBLIC_* variable.
+    | Server-side OAuth only. These client secrets live here on the API host
+    | and must never be exposed to the Next.js app or any NEXT_PUBLIC_*
+    | variable.
+    |
+    | TWO separate OAuth clients, deliberately. Google rejects any consent
+    | request that mixes the YouTube scopes with drive.file ("scopes that
+    | cannot be requested together"), so YouTube and Drive are authorized
+    | independently and never appear in the same authorization request. The
+    | scopes themselves live on App\Enums\GoogleService, which is the single
+    | source of truth for what each flow may ask for.
     |
     */
 
     'google' => [
-        'client_id' => env('GOOGLE_CLIENT_ID'),
-        'client_secret' => env('GOOGLE_CLIENT_SECRET'),
-        'redirect_uri' => env('GOOGLE_REDIRECT_URI'),
-
-        /*
-         * Least privilege:
-         *   drive.file      — only files this app created, not the whole Drive
-         *   youtube.upload  — upload only
-         *   youtube.readonly— read back the channel so we can verify it
-         */
-        'scopes' => [
-            'https://www.googleapis.com/auth/drive.file',
-            'https://www.googleapis.com/auth/youtube.upload',
-            'https://www.googleapis.com/auth/youtube.readonly',
+        'clients' => [
+            'youtube' => [
+                'client_id' => env('GOOGLE_YOUTUBE_CLIENT_ID'),
+                'client_secret' => env('GOOGLE_YOUTUBE_CLIENT_SECRET'),
+                'redirect_uri' => env('GOOGLE_YOUTUBE_REDIRECT_URI'),
+            ],
+            'drive' => [
+                'client_id' => env('GOOGLE_DRIVE_CLIENT_ID'),
+                'client_secret' => env('GOOGLE_DRIVE_CLIENT_SECRET'),
+                'redirect_uri' => env('GOOGLE_DRIVE_REDIRECT_URI'),
+            ],
         ],
     ],
 

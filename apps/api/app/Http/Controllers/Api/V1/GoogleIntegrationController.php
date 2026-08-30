@@ -2,9 +2,9 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Enums\GoogleService;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\GoogleConnectionResource;
-use App\Models\GoogleConnection;
 use App\Services\Google\GoogleClientFactory;
 use App\Services\Google\GoogleOAuthService;
 use Illuminate\Http\JsonResponse;
@@ -13,10 +13,15 @@ use Illuminate\Http\Request;
 use Throwable;
 
 /**
- * Google connection management.
+ * Google connection management, one isolated flow per service.
  *
- * The whole OAuth flow lives on the API: the client secret and the tokens
+ * The whole OAuth flow lives on the API: the client secrets and the tokens
  * never reach Next.js. The browser is only ever redirected.
+ *
+ * YouTube and Drive have separate OAuth clients because Google rejects a
+ * consent request carrying both products' scopes. Each service therefore gets
+ * its own redirect, callback and disconnect endpoint; the shared privates
+ * below hold the logic so the two flows cannot drift apart.
  */
 class GoogleIntegrationController extends Controller
 {
@@ -25,73 +30,128 @@ class GoogleIntegrationController extends Controller
         private readonly GoogleClientFactory $clients,
     ) {}
 
-    /** Current connection status for the integrations page. */
+    /** Status of both connections, for the integrations page. */
     public function show(Request $request): JsonResponse
     {
-        $connection = $request->user()->googleConnection ?? new GoogleConnection;
+        $user = $request->user();
 
-        return response()->json(['data' => new GoogleConnectionResource($connection)]);
+        return response()->json([
+            'data' => [
+                'youtube' => new GoogleConnectionResource(
+                    $user->googleConnectionFor(GoogleService::YouTube),
+                    GoogleService::YouTube,
+                    $this->clients->isConfigured(GoogleService::YouTube),
+                ),
+                'drive' => new GoogleConnectionResource(
+                    $user->googleConnectionFor(GoogleService::Drive),
+                    GoogleService::Drive,
+                    $this->clients->isConfigured(GoogleService::Drive),
+                ),
+            ],
+        ]);
     }
 
-    /** Hand the frontend a consent URL to send the user to. */
-    public function redirect(Request $request): JsonResponse
+    // ── YouTube ─────────────────────────────────────────────────────────────
+
+    public function redirectYouTube(Request $request): JsonResponse
     {
-        if (! $this->clients->isConfigured()) {
+        return $this->startFlow($request, GoogleService::YouTube);
+    }
+
+    public function callbackYouTube(Request $request): RedirectResponse
+    {
+        return $this->completeFlow($request, GoogleService::YouTube);
+    }
+
+    public function destroyYouTube(Request $request): JsonResponse
+    {
+        return $this->endConnection($request, GoogleService::YouTube);
+    }
+
+    // ── Drive ───────────────────────────────────────────────────────────────
+
+    public function redirectDrive(Request $request): JsonResponse
+    {
+        return $this->startFlow($request, GoogleService::Drive);
+    }
+
+    public function callbackDrive(Request $request): RedirectResponse
+    {
+        return $this->completeFlow($request, GoogleService::Drive);
+    }
+
+    public function destroyDrive(Request $request): JsonResponse
+    {
+        return $this->endConnection($request, GoogleService::Drive);
+    }
+
+    // ── Shared ──────────────────────────────────────────────────────────────
+
+    /** Hand the frontend a consent URL for one service. */
+    private function startFlow(Request $request, GoogleService $service): JsonResponse
+    {
+        if (! $this->clients->isConfigured($service)) {
             return response()->json([
-                'message' => 'Google is not configured on the server. Set GOOGLE_CLIENT_ID, '
-                    .'GOOGLE_CLIENT_SECRET and GOOGLE_REDIRECT_URI.',
+                'message' => $service->label().' is not configured on the server. Set '
+                    .$service->envPrefix().'_CLIENT_ID, '.$service->envPrefix().'_CLIENT_SECRET '
+                    .'and '.$service->envPrefix().'_REDIRECT_URI.',
             ], 422);
         }
 
         return response()->json([
-            'data' => ['authorization_url' => $this->oauth->authorizationUrl($request->user())],
+            'data' => [
+                'authorization_url' => $this->oauth->authorizationUrl($request->user(), $service),
+            ],
         ]);
     }
 
     /**
-     * OAuth callback.
+     * OAuth callback for one service.
      *
      * Unauthenticated by necessity — Google sends the browser here directly.
-     * The `state` parameter is what proves which user started the flow, and it
-     * is single-use.
+     * The `state` parameter proves which user started the flow; it is
+     * single-use and bound to this service, so a state issued for the other
+     * service is rejected here.
      */
-    public function callback(Request $request): RedirectResponse
+    private function completeFlow(Request $request, GoogleService $service): RedirectResponse
     {
         $frontend = rtrim((string) env('FRONTEND_URL', 'http://localhost:3000'), '/');
         $target = "{$frontend}/settings/integrations";
+        $key = $service->value;
 
         if ($request->filled('error')) {
-            return redirect("{$target}?google=denied");
+            return redirect("{$target}?{$key}=denied");
         }
 
         $state = (string) $request->query('state', '');
         $code = (string) $request->query('code', '');
 
         if ($state === '' || $code === '') {
-            return redirect("{$target}?google=invalid");
+            return redirect("{$target}?{$key}=invalid");
         }
 
-        $user = $this->oauth->consumeState($state);
+        $user = $this->oauth->consumeState($service, $state);
 
         if ($user === null) {
-            // Bad, expired or replayed state — never proceed.
-            return redirect("{$target}?google=invalid_state");
+            // Bad, expired, replayed, or issued for the other service.
+            return redirect("{$target}?{$key}=invalid_state");
         }
 
         try {
-            $this->oauth->completeConnection($user, $code);
+            $this->oauth->completeConnection($user, $service, $code);
         } catch (Throwable) {
             // The reason is logged server-side; the URL must not carry detail.
-            return redirect("{$target}?google=failed");
+            return redirect("{$target}?{$key}=failed");
         }
 
-        return redirect("{$target}?google=connected");
+        return redirect("{$target}?{$key}=connected");
     }
 
-    public function destroy(Request $request): JsonResponse
+    /** Disconnect one service, leaving the other untouched. */
+    private function endConnection(Request $request, GoogleService $service): JsonResponse
     {
-        $this->oauth->disconnect($request->user());
+        $this->oauth->disconnect($request->user(), $service);
 
-        return response()->json(['message' => 'Google disconnected.']);
+        return response()->json(['message' => $service->label().' disconnected.']);
     }
 }

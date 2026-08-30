@@ -2,6 +2,7 @@
 
 namespace App\Services\Google;
 
+use App\Enums\GoogleService;
 use App\Models\ContentProject;
 use App\Models\User;
 use Google\Http\MediaFileUpload;
@@ -33,13 +34,13 @@ class YouTubeService
      */
     public function assertExpectedChannel(User $user): void
     {
-        $connection = $user->googleConnection;
+        $connection = $user->googleConnectionFor(GoogleService::YouTube);
         $matches = $connection?->matchesExpectedChannel();
 
         if ($matches === false) {
             throw new RuntimeException(
                 'The connected YouTube channel ('.($connection?->youtube_channel_id ?? 'unknown')
-                .') is not the expected channel. Reconnect Google with the correct account.',
+                .') is not the expected channel. Reconnect YouTube with the correct account.',
             );
         }
     }
@@ -69,7 +70,7 @@ class YouTubeService
             throw new RuntimeException('The scheduled publish time is in the past.');
         }
 
-        $client = $this->clients->forUser($user);
+        $client = $this->clients->forUser($user, GoogleService::YouTube);
         $youtube = new YouTube($client);
 
         $snippet = new VideoSnippet;
@@ -165,7 +166,7 @@ class YouTubeService
     public function addToPlaylist(User $user, string $playlistId, string $videoId): bool
     {
         try {
-            $youtube = new YouTube($this->clients->forUser($user));
+            $youtube = new YouTube($this->clients->forUser($user, GoogleService::YouTube));
 
             $resource = new YouTube\PlaylistItem;
             $snippet = new YouTube\PlaylistItemSnippet;
