@@ -774,9 +774,16 @@ sudo find storage bootstrap/cache -type d -exec chmod g+s {} +
 sudo usermod -aG www-data <deploy-user>
 ```
 
-The deploy workflow re-applies the group-write and setgid bits after each run,
-so this only has to be established once. `php artisan media:diagnose` reports
-the state of every one of these directories.
+The deploy workflow re-applies the group-write and setgid bits to these
+directories after each run, but only as a best effort: once `storage` belongs
+to the web user, the deploy user no longer owns it and `chmod` is refused —
+only an owner may change a file's mode. That refusal is ignored, because on
+such a host the bits are already correct. Establish them with the commands
+above; the workflow is a safety net for hosts where the deploy user owns
+`storage` itself.
+
+`php artisan media:diagnose` reports the state of every one of these
+directories.
 
 ### Production environment
 
