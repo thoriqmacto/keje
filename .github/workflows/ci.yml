@@ -92,6 +92,69 @@ jobs:
       - name: Check formatting
         run: ./vendor/bin/pint --test
 
+  migrations:
+    name: API — migrations (MariaDB)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/api
+
+    # The test suite runs on SQLite, which has no foreign-key index
+    # requirement and rebuilds a whole table for any ALTER. That makes it
+    # structurally blind to the constraints production actually enforces — a
+    # migration can be green here and still fail on the real database. This
+    # job runs the migrations against the engine the VPS uses.
+    services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: keje
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.2'
+          extensions: mbstring, pdo_mysql, bcmath, intl
+          coverage: none
+
+      - name: Cache Composer packages
+        uses: actions/cache@v4
+        with:
+          path: apps/api/vendor
+          key: composer-${{ runner.os }}-php8.2-${{ hashFiles('apps/api/composer.lock') }}
+          restore-keys: composer-${{ runner.os }}-php8.2-
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      # up, then down, then up again: a migration that cannot be rolled back
+      # or re-applied is a migration that cannot be recovered after a partial
+      # failure, which is exactly how this job earned its place.
+      - name: Migrate, roll back, migrate again
+        env:
+          DB_CONNECTION: mariadb
+          DB_HOST: 127.0.0.1
+          DB_PORT: 3306
+          DB_DATABASE: keje
+          DB_USERNAME: root
+          DB_PASSWORD: root
+        run: |
+          export APP_KEY="base64:$(head -c 32 /dev/urandom | base64)"
+          php artisan migrate --force
+          php artisan migrate:rollback --force
+          php artisan migrate --force
+
   web:
     name: Web — types, build, lint
     runs-on: ubuntu-latest
