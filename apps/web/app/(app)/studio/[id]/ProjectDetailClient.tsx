@@ -23,6 +23,7 @@ import { RenderProgress, useRenderStatus } from "@/components/studio/render-prog
 import { ProjectStatusBadge } from "@/components/studio/status-badge";
 import { TemplateTextForm } from "@/components/studio/template-text-form";
 import { YouTubeMetadataForm } from "@/components/studio/youtube-form";
+import { YouTubeDestinationSummary } from "@/components/studio/youtube-destination";
 import {
     apiErrorMessage,
     backupToDrive,
@@ -421,6 +422,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                         </CardHeader>
                         <CardContent>
                             <YouTubeMetadataForm
+                                topicPlaylistTitle={project.topic?.youtube_playlist_id ?? null}
                                 metadata={metadata}
                                 saving={savingMeta}
                                 onChange={(patch) =>
@@ -450,6 +452,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                                 );
                             }
                         }}
+                        onChanged={() => void mutate()}
                         onYouTube={async () => {
                             try {
                                 await uploadToYouTube(projectId, metadata);
@@ -487,10 +490,12 @@ function PublicationCard({
     project,
     onDrive,
     onYouTube,
+    onChanged,
 }: {
     project: import("@/lib/types/studio").ContentProject;
     onDrive: () => Promise<void>;
     onYouTube: () => Promise<void>;
+    onChanged: () => void;
 }) {
     const rendered = project.render.has_output;
 
@@ -560,6 +565,11 @@ function PublicationCard({
                             Scheduled for {formatDateTime(project.youtube.publish_at)}
                         </p>
                     )}
+                    {/* Where this video is about to go, resolved to names.
+                        Shown before the upload button on purpose: the moment
+                        to notice a wrong destination is before publishing. */}
+                    <YouTubeDestinationSummary project={project} onChanged={onChanged} />
+
                     <div className="flex flex-wrap items-center gap-2">
                         <Button
                             size="sm"

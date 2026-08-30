@@ -575,6 +575,7 @@ GET    /content-projects/{uuid}/media-links    short-lived signed playback URLs
 
 POST   /content-projects/{uuid}/drive          202, queues the Drive backup
 POST   /content-projects/{uuid}/youtube        202, queues the YouTube upload
+POST   /content-projects/{uuid}/youtube/playlist  retry playlist membership only
 
 GET    /integrations/google                    status of both connections
 POST   /integrations/youtube/redirect          YouTube consent URL
@@ -583,6 +584,17 @@ GET    /integrations/youtube/callback          OAuth callback (state-verified, u
 POST   /integrations/drive/redirect            Drive consent URL
 DELETE /integrations/drive                     disconnect Drive only
 GET    /integrations/drive/callback            OAuth callback (state-verified, unauthenticated)
+
+GET    /integrations/youtube/channel           the connected channel
+GET    /integrations/youtube/playlists         destination playlists (paginated)
+GET    /integrations/youtube/categories        assignable video categories
+GET    /integrations/youtube/languages         i18n languages
+GET    /integrations/youtube/recent-uploads    the channel's latest uploads
+POST   /integrations/youtube/refresh           drop the cached YouTube catalog
+GET    /integrations/drive/about               account, quota, backup folder
+GET    /integrations/drive/backups             files Keje put in Drive (paginated)
+POST   /integrations/drive/refresh             drop the cached Drive catalog
+
 GET    /content-projects/{uuid}/stream         signed video delivery (unauthenticated)
 ```
 
@@ -599,7 +611,52 @@ Keje Topic                YouTube Playlist
 Riyadhush Shalihin   →    PLxxxxxxxxxxxx
 ```
 
-Linking is **never required to render**. When a topic has a playlist and a video uploads successfully, Keje adds the video to it; a playlist failure is logged and ignored rather than failing the upload. Creating playlists from Keje is deliberately not implemented yet.
+Linking is **never required to render**. Creating playlists from Keje is deliberately not implemented yet — you pick from the ones the channel already has.
+
+Two levels decide where a video lands, project first:
+
+```
+project.youtube_metadata.playlist_id     override, this video only
+    └── falls back to ──▶ topic.youtube_playlist_id     the series default
+```
+
+Setting an override on one project never rewrites the topic. Going the other way is opt-in: the New Content form offers a checkbox to also save the chosen playlist as the topic's default.
+
+When a video uploads successfully Keje adds it to the resolved playlist. **A playlist failure never fails the upload** — the video already exists on YouTube, and retrying an upload would publish a second copy. Instead the failure is recorded on the project, shown on its page, and retried with `POST /content-projects/{uuid}/youtube/playlist`, which only ever calls `playlistItems.insert`. Adding a video that is already in the playlist counts as success.
+
+The channel's own uploads playlist (the `UU…` id YouTube maintains automatically) is filtered out of every chooser: `playlistItems.insert` against it always fails, so offering it would guarantee the error.
+
+---
+
+## Connected Google data
+
+Once a connection exists, Keje reads what those APIs can tell it and uses it instead of asking you to type ids.
+
+| Where | What it shows |
+|---|---|
+| Settings → Integrations, YouTube | Granted capabilities, channel avatar/name/handle, subscriber, video and view counts, playlists, recent uploads |
+| Settings → Integrations, Drive | Google account, storage used vs. limit, the Keje backup folder, recent backups |
+| New Content | The destination channel, a playlist chooser, a category chooser, a language chooser |
+| Project detail | The resolved destination — playlist, category and privacy by name — before the upload button |
+| Topics | A playlist chooser instead of a raw `PLxxxx` field |
+
+Three rules hold everywhere:
+
+- **Nothing reaches the browser but data.** Every read is `Browser → Laravel → Google`. Access and refresh tokens stay on the API host and are never serialized into a response.
+- **A stored id is never discarded because Google could not be reached.** If the catalog fails to load, is disconnected, or no longer lists a playlist, the id is shown as-is and stays selected — saving the form cannot quietly erase a destination.
+- **Quota is spent carefully.** `search.list` costs 100 units of a 10,000/day default and is never used. `channels.list`, `playlists.list`, `playlistItems.list` and `videoCategories.list` cost 1 unit each and are authoritative for what they return.
+
+Responses are cached server-side per user and service, so opening the page repeatedly does not re-bill the quota:
+
+| Cached | For |
+|---|---|
+| Channel profile, Drive account, backup folder | 30 min |
+| Playlists, recent uploads, recent backups | 10 min |
+| Video categories, languages | 24 h |
+
+**Refresh from YouTube** / **Refresh from Drive** on the integrations page drops that cache and re-reads. Neither ever re-runs OAuth consent.
+
+Categories and languages are localized by `YOUTUBE_DEFAULT_REGION_CODE` (default `ID`) and `YOUTUBE_METADATA_LANGUAGE` (default `id`). Only categories Google marks `assignable` are offered — the rest exist but are rejected at upload time.
 
 ## Speakers
 
@@ -660,12 +717,17 @@ Scopes requested, deliberately minimal and never combined:
 | OAuth client | Scope | Why |
 |---|---|---|
 | Keje YouTube | `youtube.upload` | Upload only |
-| Keje YouTube | `youtube.readonly` | Read back the channel so it can be verified |
+| Keje YouTube | `youtube.readonly` | Read back the channel, its playlists and its categories |
+| Keje YouTube | `youtube.force-ssl` | Add an uploaded video to a playlist |
 | Keje Drive | `drive.file` | Only files Keje created — not your whole Drive |
+
+`drive.file` is deliberately **not** widened to `drive`, `drive.readonly` or `drive.metadata.readonly`. Keje has no reason to browse the rest of your Drive, so it cannot: what the integrations page lists is only ever what Keje itself uploaded.
 
 Neither flow enables `include_granted_scopes`. Incremental authorization lets Google fold scopes already granted to the project back into a request, which would silently recreate the forbidden combination. Both flows do keep `access_type=offline` and `prompt=consent`, because the queue workers need refresh tokens.
 
 > **Upgrading from the single combined connection.** Existing connections are removed by the `split_google_connections_per_service` migration: their grant covered both products, which the two new OAuth clients do not hold. Reconnect YouTube and Drive separately after deploying. The integrations page says so too.
+
+> **Adding playlist permission to an existing connection.** `youtube.force-ssl` was added after the split. A connection made before it keeps uploading and keeps reading the channel — only *adding a video to a playlist* needs the new scope. The integrations page detects this from the scopes Google actually granted and shows **Reconnect to enable playlist assignment**; nothing else about the connection changes, and Drive is untouched. Uploads that ran without it record a playlist error the project page can retry once you reconnect.
 
 > **YouTube API development limitation.** Google restricts uploads from unverified YouTube Data API projects to **private** visibility until an API compliance audit is completed. During development, expect uploaded videos to remain private regardless of the privacy you select. This is Google policy, not a Keje bug, and must not be worked around.
 

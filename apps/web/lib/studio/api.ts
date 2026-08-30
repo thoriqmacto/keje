@@ -4,9 +4,16 @@ import type {
     ContentProject,
     ContentProjectSummary,
     ContentTopic,
+    DriveAbout,
+    DriveBackupFile,
     RenderStatusPayload,
     Speaker,
     TemplateLayout,
+    YouTubeChannelProfile,
+    YouTubeLanguage,
+    YouTubePlaylist,
+    YouTubeRecentUpload,
+    YouTubeVideoCategory,
 } from "@/lib/types/studio";
 
 /**
@@ -203,4 +210,95 @@ export function apiErrorMessage(error: unknown, fallback: string): string {
         : undefined;
 
     return first ?? axiosError.response?.data?.message ?? fallback;
+}
+
+// ── Connected Google catalog ────────────────────────────────────────────────
+//
+// Every read goes through Laravel, which holds the OAuth tokens and caches the
+// responses. The browser never talks to Google directly and never sees a token.
+
+export const googleKeys = {
+    channel: "google:youtube:channel",
+    playlists: "google:youtube:playlists",
+    categories: "google:youtube:categories",
+    languages: "google:youtube:languages",
+    recentUploads: "google:youtube:recent-uploads",
+    driveAbout: "google:drive:about",
+    driveBackups: "google:drive:backups",
+} as const;
+
+export async function getYouTubeChannel(): Promise<YouTubeChannelProfile | null> {
+    const { data } = await api.get<{ data: YouTubeChannelProfile | null }>(
+        "/integrations/youtube/channel",
+    );
+    return data.data;
+}
+
+/** Destination playlists only — the channel's uploads playlist is excluded. */
+export async function listYouTubePlaylists(
+    pageToken?: string,
+): Promise<{ data: YouTubePlaylist[]; nextPageToken: string | null }> {
+    const { data } = await api.get<{
+        data: YouTubePlaylist[];
+        meta: { next_page_token: string | null };
+    }>("/integrations/youtube/playlists", { params: pageToken ? { page_token: pageToken } : {} });
+
+    return { data: data.data, nextPageToken: data.meta?.next_page_token ?? null };
+}
+
+export async function listYouTubeCategories(): Promise<YouTubeVideoCategory[]> {
+    const { data } = await api.get<{ data: YouTubeVideoCategory[] }>(
+        "/integrations/youtube/categories",
+    );
+    return data.data;
+}
+
+export async function listYouTubeLanguages(): Promise<YouTubeLanguage[]> {
+    const { data } = await api.get<{ data: YouTubeLanguage[] }>("/integrations/youtube/languages");
+    return data.data;
+}
+
+export async function listYouTubeRecentUploads(): Promise<YouTubeRecentUpload[]> {
+    const { data } = await api.get<{ data: YouTubeRecentUpload[] }>(
+        "/integrations/youtube/recent-uploads",
+    );
+    return data.data;
+}
+
+/** Drops the server-side cache and re-reads. Never re-runs OAuth consent. */
+export async function refreshYouTubeCatalog(): Promise<void> {
+    await api.post("/integrations/youtube/refresh");
+}
+
+export async function getDriveAbout(): Promise<DriveAbout> {
+    const { data } = await api.get<{ data: DriveAbout }>("/integrations/drive/about");
+    return data.data;
+}
+
+export async function listDriveBackups(
+    pageToken?: string,
+): Promise<{ data: DriveBackupFile[]; nextPageToken: string | null }> {
+    const { data } = await api.get<{
+        data: DriveBackupFile[];
+        meta: { next_page_token: string | null };
+    }>("/integrations/drive/backups", { params: pageToken ? { page_token: pageToken } : {} });
+
+    return { data: data.data, nextPageToken: data.meta?.next_page_token ?? null };
+}
+
+export async function refreshDriveCatalog(): Promise<void> {
+    await api.post("/integrations/drive/refresh");
+}
+
+/**
+ * Add an already-uploaded video to its playlist.
+ *
+ * Deliberately separate from the upload endpoint: this can never publish a
+ * second copy of the video.
+ */
+export async function assignYouTubePlaylist(projectId: string): Promise<ContentProject> {
+    const { data } = await api.post<{ data: ContentProject }>(
+        `/content-projects/${projectId}/youtube/playlist`,
+    );
+    return data.data;
 }

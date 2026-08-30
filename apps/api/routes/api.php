@@ -3,11 +3,13 @@
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\ContentProjectController;
 use App\Http\Controllers\Api\V1\ContentTopicController;
+use App\Http\Controllers\Api\V1\DriveCatalogController;
 use App\Http\Controllers\Api\V1\GoogleIntegrationController;
 use App\Http\Controllers\Api\V1\ProjectMediaController;
 use App\Http\Controllers\Api\V1\ProjectPublicationController;
 use App\Http\Controllers\Api\V1\ProjectRenderController;
 use App\Http\Controllers\Api\V1\SpeakerController;
+use App\Http\Controllers\Api\V1\YouTubeCatalogController;
 use Illuminate\Support\Facades\Route;
 
 Route::get('/ping', fn () => response()->json([
@@ -103,6 +105,8 @@ Route::prefix('v1')->group(function () {
             // both explicitly triggered — rendering never publishes anything.
             Route::post('/drive', [ProjectPublicationController::class, 'drive']);
             Route::post('/youtube', [ProjectPublicationController::class, 'youtube']);
+            // Retry playlist membership only — never re-uploads the video.
+            Route::post('/youtube/playlist', [ProjectPublicationController::class, 'playlist']);
         });
 
         // Google connection status: both services in one payload.
@@ -114,5 +118,28 @@ Route::prefix('v1')->group(function () {
 
         Route::post('/integrations/drive/redirect', [GoogleIntegrationController::class, 'redirectDrive']);
         Route::delete('/integrations/drive', [GoogleIntegrationController::class, 'destroyDrive']);
+
+        /*
+         * Catalog reads from the connected accounts, so the studio can offer
+         * real playlists and categories instead of asking anyone to type an
+         * id. Each resource is separately retrievable and separately cached:
+         * one failing call must not take the integrations page with it, and
+         * /integrations/google above stays a fast local status read.
+         */
+        Route::prefix('/integrations/youtube')->group(function () {
+            Route::get('/channel', [YouTubeCatalogController::class, 'channel']);
+            Route::get('/playlists', [YouTubeCatalogController::class, 'playlists']);
+            Route::get('/categories', [YouTubeCatalogController::class, 'categories']);
+            Route::get('/languages', [YouTubeCatalogController::class, 'languages']);
+            Route::get('/recent-uploads', [YouTubeCatalogController::class, 'recentUploads']);
+            // Drops the cached catalog and re-reads it. Not a re-consent.
+            Route::post('/refresh', [YouTubeCatalogController::class, 'refresh']);
+        });
+
+        Route::prefix('/integrations/drive')->group(function () {
+            Route::get('/about', [DriveCatalogController::class, 'about']);
+            Route::get('/backups', [DriveCatalogController::class, 'backups']);
+            Route::post('/refresh', [DriveCatalogController::class, 'refresh']);
+        });
     });
 });

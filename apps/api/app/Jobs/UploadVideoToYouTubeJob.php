@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Enums\YouTubeStatus;
 use App\Models\ContentProject;
 use App\Services\Google\GoogleNotConnectedException;
+use App\Services\Google\YouTubePlaylistAssigner;
 use App\Services\Google\YouTubeService;
 use App\Services\Media\MediaRetention;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -33,8 +34,11 @@ class UploadVideoToYouTubeJob implements ShouldQueue
         $this->onQueue('media');
     }
 
-    public function handle(YouTubeService $youtube, MediaRetention $retention): void
-    {
+    public function handle(
+        YouTubeService $youtube,
+        MediaRetention $retention,
+        YouTubePlaylistAssigner $playlists,
+    ): void {
         $project = ContentProject::with(['topic', 'speaker'])->find($this->projectId);
 
         if ($project === null) {
@@ -83,12 +87,10 @@ class UploadVideoToYouTubeJob implements ShouldQueue
                 'youtube_error' => null,
             ])->save();
 
-            // Playlist membership is a convenience, never a failure mode.
-            $playlistId = $project->topic?->youtube_playlist_id;
-
-            if (filled($playlistId)) {
-                $youtube->addToPlaylist($project->user, $playlistId, $result['id']);
-            }
+            // Playlist membership never fails the upload — the video exists
+            // and re-uploading would duplicate it — but the outcome is now
+            // recorded on the project so a failure is visible and retryable.
+            $playlists->assign($project->refresh());
 
             // The MP4 was being retained in case YouTube still wanted it. It
             // does not any more, so if Drive already has a copy it can go.

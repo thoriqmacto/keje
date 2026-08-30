@@ -30,6 +30,11 @@ class YouTubeMetadataRules
             $at('tags') => ['nullable', 'array', 'max:60'],
             $at('tags.*') => ['string', 'max:100'],
             $at('category_id') => ['nullable', 'string', 'max:10'],
+            // A project-level destination override. Falls back to the topic's
+            // playlist when absent — see YouTubePlaylistAssigner::resolve().
+            $at('playlist_id') => ['nullable', 'string', 'max:64'],
+            // BCP-47-ish; YouTube's own list is offered by the catalog API.
+            $at('default_language') => ['nullable', 'string', 'max:16'],
             $at('privacy_status') => ['nullable', Rule::in(self::PRIVACY_STATUSES)],
             // Must be in the future; YouTube performs the publication itself.
             $at('publish_at') => ['nullable', 'date', 'after:now'],

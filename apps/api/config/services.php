@@ -79,6 +79,15 @@ return [
     'youtube' => [
         // Uploads are refused unless the connected channel matches this.
         'expected_channel_id' => env('YOUTUBE_EXPECTED_CHANNEL_ID'),
+
+        /*
+         * Which region's category list to offer, and which language to name
+         * the categories in. YouTube's assignable categories differ by region,
+         * so this is not cosmetic: asking for the wrong region offers
+         * categories an upload will be rejected for.
+         */
+        'region_code' => env('YOUTUBE_DEFAULT_REGION_CODE', 'ID'),
+        'metadata_language' => env('YOUTUBE_METADATA_LANGUAGE', 'id'),
         'chunk_size' => (int) env('YOUTUBE_CHUNK_SIZE', 8 * 1024 * 1024),
         'default_category_id' => env('YOUTUBE_DEFAULT_CATEGORY_ID', '27'),
     ],
