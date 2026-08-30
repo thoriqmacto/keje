@@ -128,6 +128,11 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      # Node's built-in runner over lib/**/*.test.ts. These existed but were
+      # never executed here, so a broken redirect or CSP rule could land green.
+      - name: Unit tests
+        run: npm test
+
       - name: Build
         run: npm run build
         env:
