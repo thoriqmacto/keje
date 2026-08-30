@@ -30,7 +30,7 @@ class ForgotPasswordTest extends TestCase
         $url = (new ResetPassword('sample-token'))->toMail($user)->actionUrl;
 
         // The default FRONTEND_URL is http://localhost:3000 (from .env.example).
-        $expectedPrefix = rtrim((string) env('FRONTEND_URL', 'http://localhost:3000'), '/')
+        $expectedPrefix = rtrim((string) config('app.frontend_url'), '/')
             .'/reset-password?';
 
         $this->assertStringStartsWith($expectedPrefix, $url);

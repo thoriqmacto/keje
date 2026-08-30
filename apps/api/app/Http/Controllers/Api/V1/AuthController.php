@@ -173,7 +173,7 @@ class AuthController extends Controller
     public function verifyEmail(Request $request, int $id, string $hash): RedirectResponse
     {
         $user = User::findOrFail($id);
-        $frontend = rtrim((string) env('FRONTEND_URL', 'http://localhost:3000'), '/');
+        $frontend = rtrim((string) config('app.frontend_url'), '/');
 
         if (! hash_equals(sha1($user->getEmailForVerification()), $hash)) {
             return redirect("{$frontend}/verify-email?status=invalid");

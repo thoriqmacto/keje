@@ -56,6 +56,24 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Frontend URL
+    |--------------------------------------------------------------------------
+    |
+    | Where the Next.js app lives. Every redirect the API sends a browser to --
+    | OAuth callbacks, email verification, password reset links -- is built
+    | from this.
+    |
+    | It must be read through config(), never env(). Once `php artisan
+    | config:cache` runs, Laravel stops loading .env at all and env() returns
+    | null everywhere outside these config files, so an env() call here would
+    | silently fall back to localhost on every cached deploy.
+    |
+    */
+
+    'frontend_url' => env('FRONTEND_URL', 'http://localhost:3000'),
+
+    /*
+    |--------------------------------------------------------------------------
     | Application Timezone
     |--------------------------------------------------------------------------
     |

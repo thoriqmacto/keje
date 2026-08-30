@@ -115,7 +115,9 @@ class GoogleIntegrationController extends Controller
      */
     private function completeFlow(Request $request, GoogleService $service): RedirectResponse
     {
-        $frontend = rtrim((string) env('FRONTEND_URL', 'http://localhost:3000'), '/');
+        // config(), not env(): a cached config makes env() null at runtime,
+        // which would send every OAuth callback to localhost in production.
+        $frontend = rtrim((string) config('app.frontend_url'), '/');
         $target = "{$frontend}/settings/integrations";
         $key = $service->value;
 

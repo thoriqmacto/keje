@@ -39,6 +39,8 @@ You (the agent) are working on **Keje**, a personal YouTube content-production a
 
 ## Things to avoid
 
+- **Never call `env()` outside `config/`.** `php artisan config:cache` (which the deploy runs) stops Laravel loading `.env`, so `env()` returns null at runtime and silently yields its default. Add a config key and read it with `config()`. `ConfigCachingTest` enforces this.
+
 - Don't quietly widen permissions in `CORS_ALLOWED_ORIGINS` or `SANCTUM_STATEFUL_DOMAINS` — those are security-sensitive.
 - Don't reintroduce `react-hot-toast`. Sonner is the one toast library.
 - Don't add Next.js `rewrites()`. The same-origin proxy at `app/api/[...path]/route.ts` is the server-side path.
