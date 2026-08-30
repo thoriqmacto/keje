@@ -127,21 +127,27 @@ jobs:
             # the cd so the trap resolves artisan, and before `down` so there is
             # no window where the site is down with no trap armed.
             #
-            # On failure, clear the caches first. The cache commands below run
-            # last, so anything that dies before them -- a failed migration,
-            # most often -- leaves bootstrap/cache holding config and routes
-            # built from the PREVIOUS release while the working tree is already
-            # the new one. That mismatch is not a slow site, it is a broken
-            # one: a stale route cache resolves URLs to controller methods this
-            # code no longer has ("Call to undefined method
+            # On failure, clear the caches -- but only when this run had not
+            # rebuilt them yet. A deploy that dies before the cache commands
+            # leaves bootstrap/cache holding config and routes built from the
+            # PREVIOUS release while the working tree is already the new one.
+            # That mismatch is not a slow site, it is a broken one: a stale
+            # route cache resolves URLs to controller methods this code no
+            # longer has ("Call to undefined method
             # ...GoogleIntegrationController::callback()"), and routes added in
             # the new release are absent entirely, so requests 500 and 404 the
             # moment maintenance mode lifts. Running uncached is slower but
             # coherent with the code actually on disk.
+            #
+            # Once the caches HAVE been rebuilt they match this release, and a
+            # later step failing is no reason to throw them away -- doing so
+            # only leaves a working site needlessly uncached.
+            caches_rebuilt=0
+
             finish() {
               status=$?
-              if [ "$status" -ne 0 ]; then
-                echo "==> Deploy failed; clearing caches built from the previous release"
+              if [ "$status" -ne 0 ] && [ "$caches_rebuilt" -eq 0 ]; then
+                echo "==> Deploy failed before the caches were rebuilt; clearing the previous release's"
                 php artisan optimize:clear || true
               fi
               php artisan up || true
@@ -159,21 +165,20 @@ jobs:
             php artisan config:cache
             php artisan route:cache
             php artisan view:cache
+            caches_rebuilt=1
 
-            # Everything above ran as the deploy user, so every compiled view
-            # and cache file it just wrote is owned by that user. PHP-FPM runs
-            # as someone else and still has to write these directories at
-            # runtime -- Blade compiles on demand any view `view:cache` does
-            # not cover, the framework's own error pages among them. When it
-            # cannot, PHP reports only "tempnam(): file created in the system's
-            # temporary directory", and since that fires while rendering an
-            # error page it also swallows whatever the original exception was.
+            # PHP-FPM has to CREATE files under these directories at runtime --
+            # Blade compiles on demand any view `view:cache` does not cover, the
+            # framework's own error pages among them. That depends on the
+            # directory bits, not on the mode of files the deploy user happened
+            # to write, so only directories are touched here.
             #
-            # Group-write plus setgid keeps both users able to write: setgid
-            # makes files created here inherit the directory's group instead of
-            # the creating user's own.
-            chmod -R ug+rwX storage bootstrap/cache
-            find storage bootstrap/cache -type d -exec chmod g+s {} +
+            # Strictly best-effort. Only a file's owner may change its mode, so
+            # on a correctly provisioned host -- storage owned by the web user,
+            # the deploy user merely in its group -- this is both unnecessary
+            # and not permitted, and `chmod` exits non-zero. That must never
+            # fail a deploy whose real work is already done.
+            find storage bootstrap/cache -type d -exec chmod ug+rwx,g+s {} + 2>/dev/null || true
 
             # Signals long-running workers to exit after their current job so
             # they pick up the new code.
