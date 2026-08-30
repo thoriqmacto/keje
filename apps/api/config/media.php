@@ -172,6 +172,41 @@ return [
     |
     */
 
+    /*
+    |--------------------------------------------------------------------------
+    | Local retention
+    |--------------------------------------------------------------------------
+    |
+    | The VPS is working space, not an archive. A lecture recording can be
+    | hundreds of megabytes and nothing here ever deleted itself, so disk use
+    | grew with every project.
+    |
+    | Once the rendered MP4 is in Drive, the files that produced it have done
+    | their job: they exist only to allow a re-render. Removing them is
+    | therefore a real trade -- a pruned project can never be re-rendered,
+    | because its source audio is gone for good. The database keeps every
+    | text and metadata field, and the project points at its Drive copy.
+    |
+    | Nothing is pruned unless Drive confirms it holds the render.
+    |
+    */
+
+    'retention' => [
+        // Source audio, artwork and render scratch files, once backed up.
+        'prune_sources_after_backup' => (bool) env('MEDIA_PRUNE_SOURCES_AFTER_BACKUP', true),
+
+        // The rendered MP4 itself, once backed up.
+        'prune_output_after_backup' => (bool) env('MEDIA_PRUNE_OUTPUT_AFTER_BACKUP', true),
+
+        /*
+         * The YouTube pipeline uploads the same local MP4, so deleting it the
+         * moment Drive finishes would break publishing for any project not yet
+         * sent to YouTube. While this is on, the MP4 survives until YouTube
+         * also holds a copy. Turn it off if Drive is the only destination.
+         */
+        'retain_output_for_youtube' => (bool) env('MEDIA_RETAIN_OUTPUT_FOR_YOUTUBE', true),
+    ],
+
     'stream_link_ttl_minutes' => (int) env('MEDIA_STREAM_LINK_TTL_MINUTES', 30),
 
 ];

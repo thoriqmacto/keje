@@ -56,6 +56,7 @@ class ContentProject extends Model
     protected function casts(): array
     {
         return [
+            'media_pruned_at' => 'datetime',
             'render_status' => RenderStatus::class,
             'drive_status' => DriveStatus::class,
             'youtube_status' => YouTubeStatus::class,

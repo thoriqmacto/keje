@@ -257,11 +257,39 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                                 </div>
                             )}
 
-                            {!project.is_renderable && (
+                            {!project.is_renderable && !project.render.media_pruned_at && (
                                 <p className="text-sm text-muted-foreground">
                                     Upload the lecture audio and a background image, and enter a
                                     primary title, to enable rendering.
                                 </p>
+                            )}
+
+                            {/* A pruned project looks identical to an empty one
+                                unless we say otherwise: its paths are gone, so
+                                is_renderable and has_output are both false. */}
+                            {project.render.media_pruned_at && (
+                                <div className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
+                                    <p className="font-medium text-foreground">
+                                        Stored in Google Drive
+                                    </p>
+                                    <p>
+                                        The source audio, artwork and rendered MP4 were removed from
+                                        the server on{" "}
+                                        {formatDateTime(project.render.media_pruned_at)} to free
+                                        disk. This project cannot be re-rendered — its source audio
+                                        is no longer held here.
+                                    </p>
+                                    {project.drive.web_view_link && (
+                                        <a
+                                            href={project.drive.web_view_link}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="mt-1 inline-block underline"
+                                        >
+                                            Open the video in Google Drive
+                                        </a>
+                                    )}
+                                </div>
                             )}
 
                             <div className="flex flex-wrap gap-2">
@@ -285,7 +313,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                                 )}
                             </div>
 
-                            {project.render.has_output && (
+                            {(project.render.has_output || project.render.media_pruned_at) && (
                                 <dl className="grid grid-cols-2 gap-x-4 gap-y-1 border-t pt-3 text-xs">
                                     <dt className="text-muted-foreground">Rendered</dt>
                                     <dd>{formatDateTime(project.render.rendered_at)}</dd>

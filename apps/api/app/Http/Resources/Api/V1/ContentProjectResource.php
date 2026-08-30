@@ -45,7 +45,10 @@ class ContentProjectResource extends JsonResource
             'subtitle' => $this->subtitle,
             'part_number' => $this->part_number,
 
-            'source_audio' => filled($this->source_audio_path) ? [
+            // Gated on the descriptive column, not the path: a pruned
+            // project keeps its metadata and only loses its bytes.
+            'source_audio' => filled($this->source_audio_original_name) ? [
+                'stored' => filled($this->source_audio_path),
                 'original_name' => $this->source_audio_original_name,
                 'mime' => $this->source_audio_mime,
                 'size' => $this->source_audio_size,
@@ -56,7 +59,8 @@ class ContentProjectResource extends JsonResource
                 'bitrate' => $this->source_audio_bitrate,
             ] : null,
 
-            'background_image' => filled($this->background_image_path) ? [
+            'background_image' => filled($this->background_image_original_name) ? [
+                'stored' => filled($this->background_image_path),
                 'original_name' => $this->background_image_original_name,
                 'mime' => $this->background_image_mime,
                 'size' => $this->background_image_size,
@@ -75,6 +79,9 @@ class ContentProjectResource extends JsonResource
                 'output_size' => $this->output_size,
                 'output_duration' => $this->output_duration,
                 'has_output' => filled($this->output_path),
+                // Local media removed after the Drive backup; the project
+                // now refers to its Drive copy.
+                'media_pruned_at' => $this->media_pruned_at?->toIso8601String(),
                 'attempts' => $this->renderJobs()->count(),
             ],
 

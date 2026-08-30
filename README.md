@@ -799,7 +799,29 @@ pulls in the framework's exception-renderer Blade views, which are compiled on
 demand and therefore need a writable `storage/framework/views` at exactly the
 moment something is already going wrong.
 
-Source recordings and rendered videos live under `storage/app/private/content/{project-uuid}/` and are **never** served from a public directory. Rendered MP4s are kept locally after Drive/YouTube upload; automatic cleanup is deliberately left for a future sprint.
+Source recordings and rendered videos live under `storage/app/private/content/{project-uuid}/` and are **never** served from a public directory.
+
+### Local retention
+
+The VPS is working space, not an archive — a lecture recording alone can be hundreds of megabytes. Once Drive confirms it holds the rendered MP4, the files that produced it are deleted:
+
+| Removed | When |
+|---|---|
+| `source/` (audio, artwork), `text/`, `temp/` | as soon as the Drive backup succeeds |
+| `renders/output.mp4` | once Drive **and** YouTube both hold a copy |
+
+The MP4 is held back for YouTube because that upload reads the same local file; set `MEDIA_RETAIN_OUTPUT_FOR_YOUTUBE=false` if Drive is your only destination.
+
+**Nothing is deleted without a confirmed Drive backup** — a failed or in-flight upload, or an `uploaded` status with no file id, prunes nothing.
+
+This is a real trade. A pruned project **cannot be re-rendered**: its source audio is gone, so a title fix or template change means uploading the recording again. Every text and metadata field stays in the database, and the project points at its Drive copy. Set `MEDIA_PRUNE_SOURCES_AFTER_BACKUP=false` and `MEDIA_PRUNE_OUTPUT_AFTER_BACKUP=false` to keep everything.
+
+To reclaim space from projects rendered before this existed:
+
+```bash
+php artisan media:prune --dry-run   # what would go, and how much
+php artisan media:prune             # do it
+```
 
 ---
 

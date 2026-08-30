@@ -6,6 +6,7 @@ use App\Enums\DriveStatus;
 use App\Models\ContentProject;
 use App\Services\Google\GoogleDriveService;
 use App\Services\Google\GoogleNotConnectedException;
+use App\Services\Media\MediaRetention;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Log;
@@ -33,7 +34,7 @@ class UploadVideoToGoogleDriveJob implements ShouldQueue
         $this->onQueue('media');
     }
 
-    public function handle(GoogleDriveService $drive): void
+    public function handle(GoogleDriveService $drive, MediaRetention $retention): void
     {
         $project = ContentProject::with('topic')->find($this->projectId);
 
@@ -80,6 +81,18 @@ class UploadVideoToGoogleDriveJob implements ShouldQueue
                 'drive_uploaded_at' => now(),
                 'drive_error' => null,
             ])->save();
+
+            // Drive now holds the render, so the local files that produced it
+            // have served their purpose. Never fatal: a project that keeps its
+            // bytes is a disk-space problem, not a broken backup.
+            try {
+                $retention->prune($project->refresh());
+            } catch (Throwable $e) {
+                Log::warning('Local media prune failed after Drive backup', [
+                    'project_id' => $project->id,
+                    'exception' => $e,
+                ]);
+            }
         } catch (GoogleNotConnectedException $e) {
             $this->fail($project, $e->getMessage());
         } catch (Throwable $e) {
