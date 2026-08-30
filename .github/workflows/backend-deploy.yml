@@ -126,7 +126,27 @@ jobs:
             # dies midway must not leave the site down indefinitely. Set after
             # the cd so the trap resolves artisan, and before `down` so there is
             # no window where the site is down with no trap armed.
-            trap 'php artisan up || true' EXIT
+            #
+            # On failure, clear the caches first. The cache commands below run
+            # last, so anything that dies before them -- a failed migration,
+            # most often -- leaves bootstrap/cache holding config and routes
+            # built from the PREVIOUS release while the working tree is already
+            # the new one. That mismatch is not a slow site, it is a broken
+            # one: a stale route cache resolves URLs to controller methods this
+            # code no longer has ("Call to undefined method
+            # ...GoogleIntegrationController::callback()"), and routes added in
+            # the new release are absent entirely, so requests 500 and 404 the
+            # moment maintenance mode lifts. Running uncached is slower but
+            # coherent with the code actually on disk.
+            finish() {
+              status=$?
+              if [ "$status" -ne 0 ]; then
+                echo "==> Deploy failed; clearing caches built from the previous release"
+                php artisan optimize:clear || true
+              fi
+              php artisan up || true
+            }
+            trap finish EXIT
 
             php artisan down --retry=15 || true
 
