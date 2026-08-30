@@ -22,6 +22,7 @@ import {
     type StoredAuthUser,
 } from "@/lib/auth";
 import { AUTH_EXPIRED_EVENT } from "@/lib/api";
+import { authenticatedDestination, DEFAULT_AUTHENTICATED_PATH } from "@/lib/auth/redirects";
 
 type AuthStatus = "loading" | "authenticated" | "anonymous";
 
@@ -35,6 +36,16 @@ type AuthContextValue = {
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
+
+/**
+ * Where to go after a successful sign-in: the `next` the middleware attached
+ * when it turned away an anonymous request, or the dashboard. Validated by
+ * authenticatedDestination, so an off-site `next` can never be honoured.
+ */
+function postAuthDestination(): string {
+    if (typeof window === "undefined") return DEFAULT_AUTHENTICATED_PATH;
+    return authenticatedDestination(new URLSearchParams(window.location.search).get("next"));
+}
 
 export function useAuth() {
     const ctx = useContext(AuthContext);
@@ -52,6 +63,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const stored = readAuth();
         const usesLocalStorage = authAdapter.mode !== "cookie";
         if (usesLocalStorage && !stored) {
+            // No token here, so the auth_hint cookie is stale — a leftover from
+            // a cleared localStorage, another tab, or an old deployment. Drop
+            // it, or middleware keeps bouncing / to /dashboard forever.
+            // Guarded by usesLocalStorage so cookie mode, whose session lives
+            // in the browser's own cookie jar, is left alone.
+            clearAuth();
             setUser(null);
             setStatus("anonymous");
             return;
@@ -92,7 +109,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             if (authAdapter.mode !== "cookie") writeAuth(auth);
             setUser(auth.user);
             setStatus("authenticated");
-            router.push("/dashboard");
+            router.push(postAuthDestination());
         },
         [router],
     );
@@ -103,7 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             if (authAdapter.mode !== "cookie") writeAuth(auth);
             setUser(auth.user);
             setStatus("authenticated");
-            router.push("/dashboard");
+            router.push(postAuthDestination());
         },
         [router],
     );
