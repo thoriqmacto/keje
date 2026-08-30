@@ -22,7 +22,7 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
             <main className="flex-1">{children}</main>
             <footer className="border-t">
                 <div className="mx-auto w-full max-w-5xl px-4 py-6 text-sm text-muted-foreground">
-                    {APP_NAME} starter &middot; Laravel API + Next.js
+                    {APP_NAME} &middot; Lecture recordings to published video
                 </div>
             </footer>
         </div>

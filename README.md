@@ -238,6 +238,18 @@ Setup writes env files and installs Node dependencies. Laravel bootstrap is skip
   - No HTTP calls are made. Login/register instantly "succeed" as a fixture user.
   - Useful when the Laravel API is intentionally offline and you only want to iterate on UI.
 
+### Where each session lands
+
+- Signed in, visiting `/`, `/login` or `/register` → redirected to `/dashboard`.
+- Signed out, visiting `/dashboard`, `/studio` or `/settings` → redirected to `/login?next=<where you were going>`, and sign-in returns you there. Only same-site paths are accepted; anything else falls back to `/dashboard`.
+- Signed out, visiting `/` → the public landing page, as normal.
+- `/forgot-password`, `/reset-password` and `/verify-email` stay reachable either way, because they are opened from emailed links.
+
+The `auth_hint` cookie only decides which page renders first, so the anonymous
+landing page never flashes for a signed-in user. It is **not** authorization:
+the bearer token and `/me` remain authoritative, and a stale hint is cleared as
+soon as the app finds no stored token.
+
 Adapters live in `apps/web/lib/auth/adapters/`. Adding a new auth method = implement one more adapter.
 
 ### Password reset
@@ -374,6 +386,7 @@ See `apps/web/.env.local.example`.
 - **CORS errors in the browser.** Make sure your web origin is listed in `CORS_ALLOWED_ORIGINS` on the API. Re-run `npm run setup` and restart `php artisan serve`.
 - **`401` on `/me` right after login.** You're probably in SPA-cookie mode without `CORS_SUPPORTS_CREDENTIALS=true` or with a missing `SANCTUM_STATEFUL_DOMAINS` entry. Or, in bearer mode, localStorage was cleared. Switch back to bearer (the default) with `npm run setup:env`.
 - **`/dashboard` redirects to `/login`.** Middleware relies on the `auth_hint` cookie set at login time. If you cleared cookies, sign in again.
+- **`/` redirects to `/dashboard` when you expect the landing page.** That is the `auth_hint` cookie doing its job. If you are actually signed out, load the page once: the app clears the stale hint on boot and `/` becomes public again. To browse the landing page while signed in, sign out first.
 - **Herd link fails.** You're on Linux/Windows — Herd integration is macOS only. Answer "no" to the Herd prompt and use `php artisan serve`.
 - **Requests fail with `(blocked:csp)` in the browser console.** The frontend's Content-Security-Policy must name the Laravel API origin, because on Vercel the API is a *different* origin. The policy in `apps/web/next.config.ts` derives that origin from `NEXT_PUBLIC_API_BASE_URL` at **build time** and adds it to `connect-src`, `img-src` and `media-src`. So if the variable is missing, wrong, or was changed without redeploying, the browser blocks login, artwork and video playback before any request reaches Laravel. Set `NEXT_PUBLIC_API_BASE_URL` in the Vercel project and **redeploy** — changing it alone is not enough. Confirm with `curl -sI https://<your-app> | grep -i content-security-policy`; `connect-src` should list your API origin, not just `'self'`.
 
