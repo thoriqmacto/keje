@@ -6,6 +6,7 @@ use App\Enums\YouTubeStatus;
 use App\Models\ContentProject;
 use App\Services\Google\GoogleNotConnectedException;
 use App\Services\Google\YouTubeService;
+use App\Services\Media\MediaRetention;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\Log;
@@ -32,7 +33,7 @@ class UploadVideoToYouTubeJob implements ShouldQueue
         $this->onQueue('media');
     }
 
-    public function handle(YouTubeService $youtube): void
+    public function handle(YouTubeService $youtube, MediaRetention $retention): void
     {
         $project = ContentProject::with(['topic', 'speaker'])->find($this->projectId);
 
@@ -87,6 +88,17 @@ class UploadVideoToYouTubeJob implements ShouldQueue
 
             if (filled($playlistId)) {
                 $youtube->addToPlaylist($project->user, $playlistId, $result['id']);
+            }
+
+            // The MP4 was being retained in case YouTube still wanted it. It
+            // does not any more, so if Drive already has a copy it can go.
+            try {
+                $retention->prune($project->refresh());
+            } catch (Throwable $e) {
+                Log::warning('Local media prune failed after YouTube upload', [
+                    'project_id' => $project->id,
+                    'exception' => $e,
+                ]);
             }
         } catch (GoogleNotConnectedException $e) {
             $this->fail($project, $e->getMessage());

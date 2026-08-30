@@ -99,6 +99,8 @@ export type ContentProject = {
     part_number: number | null;
 
     source_audio: {
+        /** False once the file was pruned from the VPS after a Drive backup. */
+        stored: boolean;
         original_name: string | null;
         mime: string | null;
         size: number | null;
@@ -110,6 +112,7 @@ export type ContentProject = {
     } | null;
 
     background_image: {
+        stored: boolean;
         original_name: string | null;
         mime: string | null;
         size: number | null;
@@ -128,6 +131,8 @@ export type ContentProject = {
         output_size: number | null;
         output_duration: number | null;
         has_output: boolean;
+        /** Set when local media was removed; the render lives in Drive now. */
+        media_pruned_at: string | null;
         attempts: number;
     };
 

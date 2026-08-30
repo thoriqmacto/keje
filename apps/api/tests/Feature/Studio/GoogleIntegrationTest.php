@@ -16,6 +16,7 @@ use App\Services\Google\GoogleDriveService;
 use App\Services\Google\GoogleNotConnectedException;
 use App\Services\Google\GoogleOAuthService;
 use App\Services\Google\YouTubeService;
+use App\Services\Media\MediaRetention;
 use ArrayObject;
 use Google\Client;
 use GuzzleHttp\Client as GuzzleClient;
@@ -650,7 +651,7 @@ class GoogleIntegrationTest extends TestCase
             'web_view_link' => 'https://drive.google.com/file/d/drive-file-123/view',
         ]);
 
-        (new UploadVideoToGoogleDriveJob($project->id))->handle($drive);
+        (new UploadVideoToGoogleDriveJob($project->id))->handle($drive, app(MediaRetention::class));
 
         $project->refresh();
         $this->assertSame(DriveStatus::Uploaded, $project->drive_status);
@@ -669,7 +670,7 @@ class GoogleIntegrationTest extends TestCase
         $drive->shouldReceive('upload')->once()
             ->andThrow(new GoogleNotConnectedException('Please reconnect Google Drive.'));
 
-        (new UploadVideoToGoogleDriveJob($project->id))->handle($drive);
+        (new UploadVideoToGoogleDriveJob($project->id))->handle($drive, app(MediaRetention::class));
 
         $project->refresh();
         $this->assertSame(DriveStatus::Failed, $project->drive_status);
@@ -693,7 +694,7 @@ class GoogleIntegrationTest extends TestCase
         $drive = Mockery::mock(GoogleDriveService::class);
         $drive->shouldNotReceive('upload');
 
-        (new UploadVideoToGoogleDriveJob($project->id))->handle($drive);
+        (new UploadVideoToGoogleDriveJob($project->id))->handle($drive, app(MediaRetention::class));
     }
 
     #[Test]
@@ -728,7 +729,7 @@ class GoogleIntegrationTest extends TestCase
             'publish_at' => null,
         ]);
 
-        (new UploadVideoToYouTubeJob($project->id))->handle($youtube);
+        (new UploadVideoToYouTubeJob($project->id))->handle($youtube, app(MediaRetention::class));
 
         $project->refresh();
         $this->assertSame(YouTubeStatus::Uploaded, $project->youtube_status);
@@ -750,7 +751,7 @@ class GoogleIntegrationTest extends TestCase
             'publish_at' => now()->addWeek()->toIso8601String(),
         ]);
 
-        (new UploadVideoToYouTubeJob($project->id))->handle($youtube);
+        (new UploadVideoToYouTubeJob($project->id))->handle($youtube, app(MediaRetention::class));
 
         $this->assertSame(YouTubeStatus::Scheduled, $project->refresh()->youtube_status);
     }
