@@ -112,4 +112,20 @@ return [
 
     'password_timeout' => env('AUTH_PASSWORD_TIMEOUT', 10800),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Keje additions
+    |--------------------------------------------------------------------------
+    |
+    | Read through config(), never env(): a cached config makes env() null at
+    | runtime, which would pin both of these to their defaults in production.
+    |
+    */
+
+    // Requests per minute allowed on login, register and password reset.
+    'throttle_per_minute' => (int) env('AUTH_THROTTLE_PER_MINUTE', 10),
+
+    // Lifetime of the signed email-verification link.
+    'verification_link_ttl_minutes' => (int) env('VERIFICATION_LINK_TTL_MINUTES', 60),
+
 ];

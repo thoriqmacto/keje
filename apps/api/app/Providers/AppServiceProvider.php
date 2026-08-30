@@ -71,7 +71,7 @@ class AppServiceProvider extends ServiceProvider
             $key = $request->user()?->getAuthIdentifier() ?: $request->ip();
 
             return Limit::perMinute(
-                (int) env('AUTH_THROTTLE_PER_MINUTE', 10)
+                (int) config('auth.throttle_per_minute')
             )->by((string) $key);
         });
     }
@@ -79,7 +79,7 @@ class AppServiceProvider extends ServiceProvider
     private function configurePasswordResetUrl(): void
     {
         ResetPassword::createUrlUsing(function ($user, string $token): string {
-            $frontend = rtrim((string) env('FRONTEND_URL', 'http://localhost:3000'), '/');
+            $frontend = rtrim((string) config('app.frontend_url'), '/');
             $query = http_build_query([
                 'token' => $token,
                 'email' => $user->getEmailForPasswordReset(),
@@ -97,7 +97,7 @@ class AppServiceProvider extends ServiceProvider
         VerifyEmail::createUrlUsing(function ($user): string {
             return URL::temporarySignedRoute(
                 'verification.verify',
-                Carbon::now()->addMinutes((int) env('VERIFICATION_LINK_TTL_MINUTES', 60)),
+                Carbon::now()->addMinutes((int) config('auth.verification_link_ttl_minutes')),
                 [
                     'id' => $user->getKey(),
                     'hash' => sha1($user->getEmailForVerification()),
