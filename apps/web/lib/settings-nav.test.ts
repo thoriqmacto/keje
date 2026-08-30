@@ -67,7 +67,7 @@ describe("activeSettingsSection", () => {
     });
 
     test("Integrations is described the way the README points at it", () => {
-        // README says: Settings → Integrations → Connect Google.
+        // README says: Settings → Integrations → Connect YouTube / Connect Google Drive.
         const integrations = activeSettingsSection("/settings/integrations");
         assert.equal(integrations.label, "Integrations");
         assert.equal(integrations.description, "Google Drive and YouTube");

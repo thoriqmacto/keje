@@ -98,7 +98,7 @@ apps/web/
 │   │   ├── settings/          Profile, password, email verification banner
 │   │   │   ├── page.tsx
 │   │   │   ├── SettingsClient.tsx
-│   │   │   └── integrations/  Google connection + channel verification
+│   │   │   └── integrations/  YouTube + Drive connections, channel verification
 │   │   └── studio/            Content Studio
 │   │       ├── page.tsx       Project list
 │   │       ├── new/           Create: topic, sequence, speaker
@@ -182,8 +182,8 @@ app/
 │   │   ├── VideoRenderer           builds and runs the render
 │   │   └── MediaStorage            server-controlled paths on the private disk
 │   └── Google/
-│       ├── GoogleClientFactory     configured clients + token refresh
-│       ├── GoogleOAuthService      consent, state, connection lifecycle
+│       ├── GoogleClientFactory     per-service clients + token refresh
+│       ├── GoogleOAuthService      per-service consent, state, lifecycle
 │       ├── GoogleDriveService      chunked upload
 │       └── YouTubeService          chunked upload, scheduling, channel check
 └── Console/Commands/

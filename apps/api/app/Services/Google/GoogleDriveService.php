@@ -2,6 +2,7 @@
 
 namespace App\Services\Google;
 
+use App\Enums\GoogleService;
 use App\Models\User;
 use Google\Http\MediaFileUpload;
 use Google\Service\Drive;
@@ -14,7 +15,9 @@ use RuntimeException;
  * Uses a resumable, chunked upload: a rendered lecture can be hundreds of
  * megabytes and must never be read into PHP memory in one piece.
  *
- * Scope is drive.file, so this can only ever see files Keje created.
+ * Scope is drive.file, so this can only ever see files Keje created. It uses
+ * the Drive OAuth client exclusively — a missing or broken YouTube
+ * connection has no bearing on a backup.
  */
 class GoogleDriveService
 {
@@ -38,7 +41,7 @@ class GoogleDriveService
             throw new RuntimeException('The rendered video is no longer available to upload.');
         }
 
-        $client = $this->clients->forUser($user);
+        $client = $this->clients->forUser($user, GoogleService::Drive);
         $drive = new Drive($client);
 
         $metadata = new DriveFile([

@@ -2,6 +2,7 @@
 
 namespace App\Services\Google;
 
+use App\Enums\GoogleService;
 use App\Models\GoogleConnection;
 use App\Models\User;
 use Google\Service\YouTube;
@@ -11,11 +12,13 @@ use RuntimeException;
 use Throwable;
 
 /**
- * The OAuth dance and the resulting connection record.
+ * The OAuth dance and the resulting per-service connection record.
  *
- * State is generated here, cached against the user, and verified on callback —
- * without it the callback endpoint would accept an authorization code obtained
- * by anyone (CSRF into the victim's account).
+ * State is generated here, cached against the user *and the service*, and
+ * verified on callback. Without it the callback endpoint would accept an
+ * authorization code obtained by anyone (CSRF into the victim's account);
+ * without the service binding, a Drive consent could be redeemed at the
+ * YouTube callback and stored as a YouTube connection.
  */
 class GoogleOAuthService
 {
@@ -25,29 +28,33 @@ class GoogleOAuthService
         private readonly GoogleClientFactory $clients,
     ) {}
 
-    /** Consent URL plus the one-time state bound to this user. */
-    public function authorizationUrl(User $user): string
+    /** Consent URL plus the one-time state bound to this user and service. */
+    public function authorizationUrl(User $user, GoogleService $service): string
     {
         $state = Str::random(40);
 
-        Cache::put($this->stateKey($state), $user->id, now()->addMinutes(self::STATE_TTL_MINUTES));
+        Cache::put(
+            $this->stateKey($service, $state),
+            $user->id,
+            now()->addMinutes(self::STATE_TTL_MINUTES),
+        );
 
-        $client = $this->clients->base();
+        $client = $this->clients->base($service);
         $client->setState($state);
 
         return $client->createAuthUrl();
     }
 
     /**
-     * Verify state and return the user it was issued to.
+     * Verify state for one service and return the user it was issued to.
      *
      * Single use: the key is forgotten immediately, so a replayed callback
-     * fails even within the TTL.
+     * fails even within the TTL. A state issued for another service does not
+     * resolve here, because the service is part of the cache key.
      */
-    public function consumeState(string $state): ?User
+    public function consumeState(GoogleService $service, string $state): ?User
     {
-        $key = $this->stateKey($state);
-        $userId = Cache::pull($key);
+        $userId = Cache::pull($this->stateKey($service, $state));
 
         return $userId === null ? null : User::find($userId);
     }
@@ -57,16 +64,17 @@ class GoogleOAuthService
      *
      * @throws RuntimeException
      */
-    public function completeConnection(User $user, string $code): GoogleConnection
+    public function completeConnection(User $user, GoogleService $service, string $code): GoogleConnection
     {
-        $client = $this->clients->base();
+        $client = $this->clients->base($service);
         $token = $client->fetchAccessTokenWithAuthCode($code);
 
         if (isset($token['error'])) {
             throw new RuntimeException('Google rejected the authorization: '.$token['error']);
         }
 
-        $connection = $user->googleConnection ?? new GoogleConnection(['user_id' => $user->id]);
+        $connection = $user->googleConnectionFor($service)
+            ?? new GoogleConnection(['user_id' => $user->id, 'service' => $service]);
 
         // Google returns a refresh token only on first consent (or re-consent).
         // Never overwrite a good stored one with null.
@@ -81,6 +89,7 @@ class GoogleOAuthService
 
         $connection->forceFill([
             'user_id' => $user->id,
+            'service' => $service,
             'access_token' => $token['access_token'] ?? null,
             'refresh_token' => $refreshToken,
             'token_expires_at' => now()->addSeconds((int) ($token['expires_in'] ?? 3600)),
@@ -88,65 +97,64 @@ class GoogleOAuthService
             'connected_at' => now(),
         ])->save();
 
-        $this->syncIdentity($user, $connection);
+        if ($service === GoogleService::YouTube) {
+            $this->syncYouTubeChannel($user, $connection);
+        }
 
         return $connection->refresh();
     }
 
     /**
-     * Record which Google account and YouTube channel this connection controls,
-     * so the integrations page can warn before anything is uploaded to the
-     * wrong channel.
+     * Record which YouTube channel this connection controls, so the
+     * integrations page can warn before anything is uploaded to the wrong one.
      *
-     * Best-effort: failing to read the channel must not undo a valid connection.
+     * YouTube only. A Drive connection has no channel and must never trigger a
+     * YouTube API call — it does not hold the scope for one.
+     *
+     * Best-effort: failing to read the channel must not undo a valid
+     * connection, so a mismatch surfaces as "unknown" rather than a failure.
      */
-    public function syncIdentity(User $user, GoogleConnection $connection): void
+    public function syncYouTubeChannel(User $user, GoogleConnection $connection): void
     {
-        try {
-            $client = $this->clients->forUser($user);
-
-            $oauth = new \Google\Service\Oauth2($client);
-            $connection->google_account_email = $oauth->userinfo->get()->email ?? null;
-        } catch (Throwable) {
-            // Email is a nicety; keep going.
+        if ($connection->service !== GoogleService::YouTube) {
+            return;
         }
 
         try {
-            $youtube = new YouTube($this->clients->forUser($user));
+            $youtube = new YouTube($this->clients->forUser($user, GoogleService::YouTube));
             $channels = $youtube->channels->listChannels('id,snippet', ['mine' => true]);
             $channel = $channels->getItems()[0] ?? null;
 
             if ($channel !== null) {
                 $connection->youtube_channel_id = $channel->getId();
                 $connection->youtube_channel_title = $channel->getSnippet()?->getTitle();
+                $connection->save();
             }
         } catch (Throwable) {
-            // Requires youtube.readonly; a connection without it is still usable
-            // for Drive, so this stays non-fatal.
+            // Leaves the channel unknown, which the UI reports as unverified.
         }
-
-        $connection->save();
     }
 
-    public function disconnect(User $user): void
+    public function disconnect(User $user, GoogleService $service): void
     {
-        $connection = $user->googleConnection;
+        $connection = $user->googleConnectionFor($service);
 
         if ($connection === null) {
             return;
         }
 
         try {
-            $this->clients->forUser($user)->revokeToken($connection->refresh_token);
+            $this->clients->forUser($user, $service)->revokeToken($connection->refresh_token);
         } catch (Throwable) {
             // Already revoked or unreachable — either way, drop our copy.
         }
 
+        // Only this service's row. The other service keeps its credentials.
         $connection->delete();
     }
 
-    private function stateKey(string $state): string
+    private function stateKey(GoogleService $service, string $state): string
     {
-        return "google:oauth:state:{$state}";
+        return "google:oauth:{$service->value}:{$state}";
     }
 }

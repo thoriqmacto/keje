@@ -365,7 +365,8 @@ Media rendering (API host only — see `apps/api/.env.example` for the annotated
 
 Google — **secrets, API host only, never Vercel, never `NEXT_PUBLIC_*`**:
 
-- `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI`.
+- `GOOGLE_YOUTUBE_CLIENT_ID`, `GOOGLE_YOUTUBE_CLIENT_SECRET`, `GOOGLE_YOUTUBE_REDIRECT_URI` — the YouTube OAuth client.
+- `GOOGLE_DRIVE_CLIENT_ID`, `GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_REDIRECT_URI` — the Drive OAuth client. Separate on purpose; see [Google setup](#google-setup).
 - `GOOGLE_DRIVE_FOLDER_ID` — optional; a folder is created by name when unset.
 - `GOOGLE_DRIVE_FOLDER_NAME` — default `Keje YouTube Outputs`.
 - `YOUTUBE_EXPECTED_CHANNEL_ID` — uploads are blocked when the connected channel differs.
@@ -539,7 +540,7 @@ That same endpoint is the pre-render check — text that cannot be laid out come
 | `/studio/[uuid]` | Media upload, title fields, YouTube metadata, preview, render, playback, publish |
 | `/studio/topics` | Topics and playlist links |
 | `/studio/topics/[uuid]` | One topic and its videos, in sequence order |
-| `/settings/integrations` | Google connection and channel verification |
+| `/settings/integrations` | YouTube and Google Drive connections, and channel verification |
 
 ## API endpoints
 
@@ -571,14 +572,17 @@ GET    /content-projects/{uuid}/media-links    short-lived signed playback URLs
 POST   /content-projects/{uuid}/drive          202, queues the Drive backup
 POST   /content-projects/{uuid}/youtube        202, queues the YouTube upload
 
-GET    /integrations/google                    connection status
-POST   /integrations/google/redirect           consent URL
-DELETE /integrations/google                    disconnect
-GET    /integrations/google/callback           OAuth callback (state-verified, unauthenticated)
+GET    /integrations/google                    status of both connections
+POST   /integrations/youtube/redirect          YouTube consent URL
+DELETE /integrations/youtube                   disconnect YouTube only
+GET    /integrations/youtube/callback          OAuth callback (state-verified, unauthenticated)
+POST   /integrations/drive/redirect            Drive consent URL
+DELETE /integrations/drive                     disconnect Drive only
+GET    /integrations/drive/callback            OAuth callback (state-verified, unauthenticated)
 GET    /content-projects/{uuid}/stream         signed video delivery (unauthenticated)
 ```
 
-The last two are necessarily unauthenticated. The OAuth callback is reached by a Google redirect and is bound to its user by a single-use `state`. The stream route is reached by a `<video>` element, which cannot attach a bearer token; the short-lived signature issued by `/media-links` is its authorization.
+The last three are necessarily unauthenticated. The OAuth callback is reached by a Google redirect and is bound to its user by a single-use `state`. The stream route is reached by a `<video>` element, which cannot attach a bearer token; the short-lived signature issued by `/media-links` is its authorization.
 
 ---
 
@@ -615,30 +619,49 @@ The studio can prefill the YouTube title from the visual fields, but it stays in
 
 ## Google setup
 
-Google Drive and YouTube use **server-side OAuth**. The client secret and the refresh token live on the Laravel host and are never sent to the browser, never stored in `localStorage`, and never exposed through the API.
+Google Drive and YouTube use **server-side OAuth**. The client secrets and the refresh tokens live on the Laravel host and are never sent to the browser, never stored in `localStorage`, and never exposed through the API.
 
-1. Create or select a project in the [Google Cloud console](https://console.cloud.google.com/).
-2. Enable the **Google Drive API**.
-3. Enable the **YouTube Data API v3**.
-4. Configure the OAuth consent screen (External, with your Google account as a test user).
-5. Create an OAuth client of type **Web application**.
-6. Add the redirect URI — it points at the **API**, not the frontend:
-   `https://api.yourapp.com/api/v1/integrations/google/callback`
-7. Set `GOOGLE_CLIENT_ID` in `apps/api/.env`.
-8. Set `GOOGLE_CLIENT_SECRET` in `apps/api/.env`.
-9. Set `GOOGLE_REDIRECT_URI` to exactly the URI you registered.
-10. Open **Settings → Integrations** in Keje and click **Connect Google**.
-11. Verify the channel shown matches `YOUTUBE_EXPECTED_CHANNEL_ID`. A mismatch blocks uploads.
+**Keje uses two separate OAuth clients — Keje YouTube and Keje Drive — and authorizes them independently.** Google refuses any consent request that mixes the YouTube scopes with `drive.file`:
 
-Do **not** download the credentials JSON into the repository. Only the three environment variables are needed.
+```
+Error 400: invalid_request
+This request contains scopes that cannot be requested together:
+[youtube.readonly, youtube.upload, drive.file]
+```
 
-Scopes requested, deliberately minimal:
+So there is no single "Connect Google" action. Each product is connected on its own, and Keje asks each for only the permissions that feature needs. Connecting one does not connect the other, and disconnecting one leaves the other working.
 
-| Scope | Why |
-|---|---|
-| `drive.file` | Only files Keje created — not your whole Drive |
-| `youtube.upload` | Upload only |
-| `youtube.readonly` | Read back the channel so it can be verified |
+1. Configure the **Google Auth Platform** branding and audience for your project (External, with your Google account as a test user).
+2. Enable the **YouTube Data API v3**.
+3. Enable the **Google Drive API**.
+4. Create an OAuth client of type **Web application** named e.g. *Keje YouTube*.
+5. Register its redirect URI — it points at the **API**, not the frontend:
+   `https://api.yourapp.com/api/v1/integrations/youtube/callback`
+6. Create a second OAuth client of type **Web application** named e.g. *Keje Drive*.
+7. Register its redirect URI:
+   `https://api.yourapp.com/api/v1/integrations/drive/callback`
+8. Set both credential sets in `apps/api/.env`:
+   - `GOOGLE_YOUTUBE_CLIENT_ID`, `GOOGLE_YOUTUBE_CLIENT_SECRET`, `GOOGLE_YOUTUBE_REDIRECT_URI`
+   - `GOOGLE_DRIVE_CLIENT_ID`, `GOOGLE_DRIVE_CLIENT_SECRET`, `GOOGLE_DRIVE_REDIRECT_URI`
+
+   Each redirect URI must match the one registered on **its own** client, exactly.
+9. Open **Settings → Integrations** in Keje and click **Connect YouTube**.
+10. Verify the channel shown matches `YOUTUBE_EXPECTED_CHANNEL_ID`. A mismatch blocks YouTube uploads — but not Drive backup.
+11. Click **Connect Google Drive**.
+
+Do **not** download the credentials JSON into the repository. Only the environment variables are needed.
+
+Scopes requested, deliberately minimal and never combined:
+
+| OAuth client | Scope | Why |
+|---|---|---|
+| Keje YouTube | `youtube.upload` | Upload only |
+| Keje YouTube | `youtube.readonly` | Read back the channel so it can be verified |
+| Keje Drive | `drive.file` | Only files Keje created — not your whole Drive |
+
+Neither flow enables `include_granted_scopes`. Incremental authorization lets Google fold scopes already granted to the project back into a request, which would silently recreate the forbidden combination. Both flows do keep `access_type=offline` and `prompt=consent`, because the queue workers need refresh tokens.
+
+> **Upgrading from the single combined connection.** Existing connections are removed by the `split_google_connections_per_service` migration: their grant covered both products, which the two new OAuth clients do not hold. Reconnect YouTube and Drive separately after deploying. The integrations page says so too.
 
 > **YouTube API development limitation.** Google restricts uploads from unverified YouTube Data API projects to **private** visibility until an API compliance audit is completed. During development, expect uploaded videos to remain private regardless of the privacy you select. This is Google policy, not a Keje bug, and must not be worked around.
 

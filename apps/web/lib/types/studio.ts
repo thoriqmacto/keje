@@ -231,14 +231,36 @@ export type TemplateLayout = {
     elements: LayoutElement[];
 };
 
-export type GoogleConnection = {
+/**
+ * Google is authorized per product, not once.
+ *
+ * YouTube and Drive have separate OAuth clients because Google refuses a
+ * consent request carrying both products' scopes, so each has its own
+ * connection state and neither implies the other.
+ */
+export type GoogleServiceKey = "youtube" | "drive";
+
+type GoogleConnectionBase = {
+    service: GoogleServiceKey;
+    label: string;
+    configured: boolean;
     connected: boolean;
-    account_email: string | null;
-    youtube_channel_id: string | null;
-    youtube_channel_title: string | null;
-    channel_matches_expected: boolean | null;
-    expected_channel_id: string | null;
     scopes: string[];
     connected_at: string | null;
-    configured: boolean;
+};
+
+export type YouTubeConnection = GoogleConnectionBase & {
+    service: "youtube";
+    channel_id: string | null;
+    channel_title: string | null;
+    /** null when no expected channel is configured, or the channel is unknown. */
+    channel_matches_expected: boolean | null;
+    expected_channel_id: string | null;
+};
+
+export type DriveConnection = GoogleConnectionBase & { service: "drive" };
+
+export type GoogleIntegrations = {
+    youtube: YouTubeConnection;
+    drive: DriveConnection;
 };
