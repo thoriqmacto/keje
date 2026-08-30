@@ -389,6 +389,7 @@ See `apps/web/.env.local.example`.
 - **`/dashboard` redirects to `/login`.** Middleware relies on the `auth_hint` cookie set at login time. If you cleared cookies, sign in again.
 - **`/` redirects to `/dashboard` when you expect the landing page.** That is the `auth_hint` cookie doing its job. If you are actually signed out, load the page once: the app clears the stale hint on boot and `/` becomes public again. To browse the landing page while signed in, sign out first.
 - **A migration failed partway on MySQL/MariaDB.** MySQL commits each DDL statement immediately and cannot roll a schema change back, so a failure leaves the earlier statements applied and the migration unrecorded. Keje's migrations are written to be safe to re-run over that partial state: fix the cause, then `php artisan migrate --force` again. `php artisan down` / `php artisan up` bracket the deploy, so the app stays in maintenance mode until it succeeds.
+- **`tempnam(): file created in the system's temporary directory`.** Blade could not write a compiled view, because `storage/framework/views` is not writable by the PHP-FPM user — usually because a deploy running as another user created those files first. This is almost always a *secondary* failure: it happens while rendering the error page, so the exception that actually broke the request is discarded with it. **Look in `storage/logs/laravel.log` for the real error.** Fix the permissions per [Permissions](#permissions), then `php artisan media:diagnose`, which checks every directory both users need.
 - **Herd link fails.** You're on Linux/Windows — Herd integration is macOS only. Answer "no" to the Herd prompt and use `php artisan serve`.
 - **Requests fail with `(blocked:csp)` in the browser console.** The frontend's Content-Security-Policy must name the Laravel API origin, because on Vercel the API is a *different* origin. The policy in `apps/web/next.config.ts` derives that origin from `NEXT_PUBLIC_API_BASE_URL` at **build time** and adds it to `connect-src`, `img-src` and `media-src`. So if the variable is missing, wrong, or was changed without redeploying, the browser blocks login, artwork and video playback before any request reaches Laravel. Set `NEXT_PUBLIC_API_BASE_URL` in the Vercel project and **redeploy** — changing it alone is not enough. Confirm with `curl -sI https://<your-app> | grep -i content-security-policy`; `connect-src` should list your API origin, not just `'self'`.
 
@@ -757,10 +758,37 @@ Keje does not modify OS configuration — set these yourself.
 
 ### Permissions
 
+`storage` and `bootstrap/cache` are written by **two** users: the deploy user
+(`view:cache`, `config:cache`, migrations) and the PHP-FPM user at runtime.
+Getting the owner right once is not enough — without the setgid bit, files the
+deploy writes are owned by the deploy user's own group and PHP-FPM cannot
+rewrite them on the next request.
+
 ```bash
 sudo chown -R www-data:www-data storage bootstrap/cache
 sudo chmod -R 775 storage bootstrap/cache
+# setgid: files created later inherit the directory's group, not the creator's.
+sudo find storage bootstrap/cache -type d -exec chmod g+s {} +
+# Let the deploy user write them too.
+sudo usermod -aG www-data <deploy-user>
 ```
+
+The deploy workflow re-applies the group-write and setgid bits after each run,
+so this only has to be established once. `php artisan media:diagnose` reports
+the state of every one of these directories.
+
+### Production environment
+
+```dotenv
+APP_ENV=production
+APP_DEBUG=false
+```
+
+`APP_DEBUG=true` in production serves Laravel's full debug page — stack traces,
+file paths, and configuration — to anyone who can trigger an error. It also
+pulls in the framework's exception-renderer Blade views, which are compiled on
+demand and therefore need a writable `storage/framework/views` at exactly the
+moment something is already going wrong.
 
 Source recordings and rendered videos live under `storage/app/private/content/{project-uuid}/` and are **never** served from a public directory. Rendered MP4s are kept locally after Drive/YouTube upload; automatic cleanup is deliberately left for a future sprint.
 

@@ -44,6 +44,7 @@ class MediaDiagnoseCommand extends Command
         $this->checkFonts();
         $this->checkTemplates($templates);
         $this->checkStorage();
+        $this->checkRuntimeWritability();
         $this->checkQueue();
         $this->checkGoogle($clients);
 
@@ -151,6 +152,91 @@ class MediaDiagnoseCommand extends Command
                 ? $this->caution('Disk space', $message.' — low')
                 : $this->good('Disk space', $message);
         }
+    }
+
+    /**
+     * Directories both the deploy user and the PHP-FPM user must be able to
+     * write.
+     *
+     * This is a shared-ownership problem, not a one-time setup step. A deploy
+     * runs `view:cache` and friends as the deploy user, which leaves compiled
+     * views and caches owned by *that* user; PHP-FPM then cannot rewrite them
+     * at runtime. Blade surfaces it as the near-useless
+     * "tempnam(): file created in the system's temporary directory", and
+     * because it happens while rendering the error page, whatever the original
+     * exception was is lost with it.
+     */
+    private function checkRuntimeWritability(): void
+    {
+        $paths = [
+            'Compiled views' => storage_path('framework/views'),
+            'Framework cache' => storage_path('framework/cache'),
+            'Sessions' => storage_path('framework/sessions'),
+            'Logs' => storage_path('logs'),
+            'Bootstrap cache' => base_path('bootstrap/cache'),
+        ];
+
+        foreach ($paths as $label => $path) {
+            if (! is_dir($path)) {
+                $this->bad($label, "missing: {$path}");
+
+                continue;
+            }
+
+            if (! is_writable($path)) {
+                $this->bad($label, 'not writable by '.$this->currentUser().": {$path}");
+
+                continue;
+            }
+
+            $mode = @fileperms($path);
+
+            // Group-write is what lets the deploy user and PHP-FPM share these
+            // directories. Without it, whichever writes first locks the other
+            // out on the next deploy.
+            if ($mode !== false && ($mode & 0o020) === 0) {
+                $this->caution(
+                    $label,
+                    sprintf(
+                        'writable, but not group-writable (%s %s:%s) — PHP-FPM may be locked out',
+                        substr(sprintf('%o', $mode), -4),
+                        $this->ownerName(@fileowner($path)),
+                        $this->groupName(@filegroup($path)),
+                    ),
+                );
+
+                continue;
+            }
+
+            $this->good($label, 'writable');
+        }
+    }
+
+    private function currentUser(): string
+    {
+        return $this->ownerName(function_exists('posix_geteuid') ? posix_geteuid() : null);
+    }
+
+    private function ownerName(int|false|null $uid): string
+    {
+        if ($uid === false || $uid === null) {
+            return 'unknown';
+        }
+
+        return function_exists('posix_getpwuid')
+            ? (posix_getpwuid($uid)['name'] ?? (string) $uid)
+            : (string) $uid;
+    }
+
+    private function groupName(int|false|null $gid): string
+    {
+        if ($gid === false || $gid === null) {
+            return 'unknown';
+        }
+
+        return function_exists('posix_getgrgid')
+            ? (posix_getgrgid($gid)['name'] ?? (string) $gid)
+            : (string) $gid;
     }
 
     private function checkQueue(): void

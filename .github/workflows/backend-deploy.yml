@@ -140,6 +140,21 @@ jobs:
             php artisan route:cache
             php artisan view:cache
 
+            # Everything above ran as the deploy user, so every compiled view
+            # and cache file it just wrote is owned by that user. PHP-FPM runs
+            # as someone else and still has to write these directories at
+            # runtime -- Blade compiles on demand any view `view:cache` does
+            # not cover, the framework's own error pages among them. When it
+            # cannot, PHP reports only "tempnam(): file created in the system's
+            # temporary directory", and since that fires while rendering an
+            # error page it also swallows whatever the original exception was.
+            #
+            # Group-write plus setgid keeps both users able to write: setgid
+            # makes files created here inherit the directory's group instead of
+            # the creating user's own.
+            chmod -R ug+rwX storage bootstrap/cache
+            find storage bootstrap/cache -type d -exec chmod g+s {} +
+
             # Signals long-running workers to exit after their current job so
             # they pick up the new code.
             php artisan queue:restart
