@@ -20,68 +20,106 @@ use Illuminate\Support\Facades\Schema;
  * purpose: its grant covers both products, so keeping it under either
  * service would claim an authorization the new, separate OAuth clients do
  * not hold. Those users reconnect each service once.
+ *
+ * Index order matters on MySQL/MariaDB. `user_id` carries both a unique index
+ * and a foreign key, and InnoDB refuses to drop the last index that supports
+ * an FK ("needed in a foreign key constraint"). So the composite unique is
+ * created *first*: with `user_id` as its leftmost column it can carry the
+ * foreign key, which then frees the old single-column index to be dropped.
+ * The foreign key itself is never touched.
+ *
+ * Every step is guarded, because a run that failed partway on MySQL leaves
+ * its committed DDL behind — MySQL cannot roll back schema changes — and the
+ * migration must be safe to re-run over that partial state.
  */
 return new class extends Migration
 {
-    private const YOUTUBE_SCOPE = 'youtube';
+    private const TABLE = 'google_connections';
 
-    private const DRIVE_SCOPE = 'drive';
+    private const OLD_UNIQUE = 'google_connections_user_id_unique';
+
+    private const NEW_UNIQUE = 'google_connections_user_id_service_unique';
 
     public function up(): void
     {
-        Schema::table('google_connections', function (Blueprint $table) {
-            $table->string('service', 16)->nullable()->after('user_id');
-        });
+        if (! Schema::hasColumn(self::TABLE, 'service')) {
+            Schema::table(self::TABLE, function (Blueprint $table) {
+                $table->string('service', 16)->nullable()->after('user_id');
+            });
+        }
 
         $this->attributeLegacyConnections();
 
-        Schema::table('google_connections', function (Blueprint $table) {
-            // The old shape allowed exactly one connection per user.
-            $table->dropUnique(['user_id']);
+        Schema::table(self::TABLE, function (Blueprint $table) {
+            $table->string('service', 16)->nullable(false)->change();
         });
 
-        Schema::table('google_connections', function (Blueprint $table) {
-            $table->string('service', 16)->nullable(false)->change();
-            $table->unique(['user_id', 'service']);
-        });
+        // Before the drop below, so the foreign key on user_id always has an
+        // index to lean on.
+        if (! $this->hasIndex(self::NEW_UNIQUE)) {
+            Schema::table(self::TABLE, function (Blueprint $table) {
+                $table->unique(['user_id', 'service']);
+            });
+        }
+
+        if ($this->hasIndex(self::OLD_UNIQUE)) {
+            Schema::table(self::TABLE, function (Blueprint $table) {
+                $table->dropUnique(['user_id']);
+            });
+        }
     }
 
     public function down(): void
     {
         // Collapsing two connections back into one would have to discard a
-        // service's tokens, so drop them all and let users reconnect.
-        DB::table('google_connections')->delete();
+        // service's tokens, so drop them all and let users reconnect. This
+        // also clears the duplicate user_ids that the unique index below
+        // would otherwise reject.
+        DB::table(self::TABLE)->delete();
 
-        Schema::table('google_connections', function (Blueprint $table) {
-            $table->dropUnique(['user_id', 'service']);
-            $table->dropColumn('service');
-        });
+        // Same ordering constraint in reverse: restore the single-column
+        // index before removing the composite one the foreign key is using.
+        if (! $this->hasIndex(self::OLD_UNIQUE)) {
+            Schema::table(self::TABLE, function (Blueprint $table) {
+                $table->unique('user_id');
+            });
+        }
 
-        Schema::table('google_connections', function (Blueprint $table) {
-            $table->unique('user_id');
-        });
+        if ($this->hasIndex(self::NEW_UNIQUE)) {
+            Schema::table(self::TABLE, function (Blueprint $table) {
+                $table->dropUnique(['user_id', 'service']);
+            });
+        }
+
+        if (Schema::hasColumn(self::TABLE, 'service')) {
+            Schema::table(self::TABLE, function (Blueprint $table) {
+                $table->dropColumn('service');
+            });
+        }
     }
 
     /**
      * Give each pre-split row a service, or remove it.
      *
      * Runs on raw rows rather than the model, because the model now requires
-     * the very column this migration is adding.
+     * the very column this migration is adding. Only untouched rows are
+     * considered, so re-running after a partial failure leaves already
+     * attributed connections alone.
      */
     private function attributeLegacyConnections(): void
     {
-        $rows = DB::table('google_connections')->select('id', 'scopes')->get();
+        $rows = DB::table(self::TABLE)->whereNull('service')->select('id', 'scopes')->get();
 
         foreach ($rows as $row) {
             $service = $this->serviceFor($row->scopes);
 
             if ($service === null) {
-                DB::table('google_connections')->where('id', $row->id)->delete();
+                DB::table(self::TABLE)->where('id', $row->id)->delete();
 
                 continue;
             }
 
-            DB::table('google_connections')->where('id', $row->id)->update(['service' => $service]);
+            DB::table(self::TABLE)->where('id', $row->id)->update(['service' => $service]);
         }
     }
 
@@ -105,8 +143,8 @@ return new class extends Migration
         }
 
         $joined = implode(' ', array_map(strval(...), $scopes));
-        $hasYouTube = str_contains($joined, self::YOUTUBE_SCOPE);
-        $hasDrive = str_contains($joined, self::DRIVE_SCOPE);
+        $hasYouTube = str_contains($joined, 'youtube');
+        $hasDrive = str_contains($joined, 'drive');
 
         return match (true) {
             $hasYouTube && ! $hasDrive => 'youtube',
@@ -115,5 +153,16 @@ return new class extends Migration
             // neither: not attributable.
             default => null,
         };
+    }
+
+    private function hasIndex(string $name): bool
+    {
+        foreach (Schema::getIndexes(self::TABLE) as $index) {
+            if ($index['name'] === $name) {
+                return true;
+            }
+        }
+
+        return false;
     }
 };
