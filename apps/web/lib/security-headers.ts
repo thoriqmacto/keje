@@ -57,6 +57,35 @@ export function apiOrigin(
  * here; the API origin is only granted to the three directives that actually
  * need it, never wildcarded.
  */
+/**
+ * Image hosts Google serves connected-account artwork from.
+ *
+ * YouTube thumbnails and channel avatars come from Google's CDN, not from
+ * Laravel, so with only `'self'` the browser blocked every one of them and
+ * reported nothing the user could see — the catalog pages simply rendered
+ * with holes where the pictures should be.
+ *
+ * Named explicitly rather than `img-src https:` or a wildcard. These are the
+ * only hosts the app has any reason to load an image from, and widening the
+ * directive to fix a broken thumbnail would hand every other origin on the
+ * internet a place to render pixels in this page.
+ *
+ * A server-side image proxy was the alternative. It buys nothing here: these
+ * URLs are public CDN links to the user's own channel, so proxying adds
+ * bandwidth, a cache to manage and an SSRF surface to defend, in exchange for
+ * hiding a request Google is already the other end of.
+ */
+export const GOOGLE_IMAGE_HOSTS = [
+    // Video thumbnails.
+    "https://i.ytimg.com",
+    "https://i9.ytimg.com",
+    // Channel avatars and banners.
+    "https://yt3.ggpht.com",
+    "https://yt3.googleusercontent.com",
+    // Google account pictures, and Drive file thumbnails.
+    "https://lh3.googleusercontent.com",
+] as const;
+
 export function buildContentSecurityPolicy(
     origin: string | null = apiOrigin(),
 ): string {
@@ -72,9 +101,10 @@ export function buildContentSecurityPolicy(
         "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
         "font-src 'self' https://fonts.gstatic.com",
-        // blob: covers the background preview, which is fetched with the bearer
-        // token and turned into an object URL.
-        `img-src ${allowingApi("'self'", "data:", "blob:")}`,
+        // blob: covers the background preview, which is fetched with the
+        // bearer token and turned into an object URL. The Google hosts are
+        // what make connected-account thumbnails and avatars render at all.
+        `img-src ${allowingApi("'self'", "data:", "blob:", ...GOOGLE_IMAGE_HOSTS)}`,
         `connect-src ${allowingApi("'self'")}`,
         // Rendered video is served from Laravel behind a short-lived signed URL.
         `media-src ${allowingApi("'self'", "blob:")}`,

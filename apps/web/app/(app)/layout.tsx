@@ -45,8 +45,17 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                             <Link href="/studio" className="hover:text-foreground">
                                 Studio
                             </Link>
-                            <Link href="/studio/topics" className="hover:text-foreground">
-                                Topics
+                            {/* Shown whether or not the integration is
+                                connected: a nav item that appears and
+                                disappears reads as a bug, and the pages
+                                themselves explain how to connect. Topics
+                                moved here — YouTube playlists are the
+                                grouping now. */}
+                            <Link href="/youtube" className="hover:text-foreground">
+                                YouTube
+                            </Link>
+                            <Link href="/drive" className="hover:text-foreground">
+                                Drive
                             </Link>
                             <Link href="/settings" className="hover:text-foreground">
                                 Settings

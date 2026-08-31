@@ -636,6 +636,73 @@ The last three are necessarily unauthenticated. The OAuth callback is reached by
 
 ---
 
+## Connected Google pages
+
+Two top-level pages browse the connected accounts:
+
+| Route | Shows |
+|---|---|
+| `/youtube` | channel profile, playlists, recent uploads, granted capabilities |
+| `/drive` | account, storage quota, backup folder, the files Keje created |
+
+**Settings → Integrations manages the connection** — connect, reconnect,
+disconnect, permissions — and links to those pages rather than embedding the
+catalogs. A catalog in Settings buried the controls the page exists for.
+
+Drive stays on `drive.file`. The page shows what Keje created and says so;
+widening the scope to browse everything would trade the point of the narrow
+grant for a file picker nobody asked for.
+
+`/studio/topics` redirects to `/youtube`. A playlist and a local topic were
+always the same grouping described twice, and existing bookmarks keep working.
+
+### Why YouTube images were blank
+
+The Content-Security-Policy allowed images from `'self'`, `data:`, `blob:` and
+the API origin only. Thumbnails and channel avatars come from Google's CDN, so
+every one of them was blocked before it left the browser — silently, with the
+pages simply rendering holes.
+
+Fixed with an explicit host allow-list in `lib/security-headers.ts`:
+
+```
+i.ytimg.com  i9.ytimg.com  yt3.ggpht.com  yt3.googleusercontent.com  lh3.googleusercontent.com
+```
+
+Not `img-src https:` and not a wildcard — widening the directive to fix a
+thumbnail would hand every origin on the internet a place to render pixels in
+the page. A server-side image proxy was the alternative and buys nothing here:
+these are public CDN links to the user's own channel, so proxying adds
+bandwidth, a cache and an SSRF surface in exchange for hiding a request Google
+is already the other end of.
+
+## What YouTube says now
+
+Our upload pipeline status and the video's current state on YouTube are
+separate fields, because they answer different questions. A scheduled video
+publishes itself and people change privacy from the YouTube app; neither
+reaches Keje unless it asks.
+
+```
+YouTube status
+Scheduled   31 Aug 2026 · 19:00      →   Published   31 Aug 2026 · 19:00
+```
+
+`videos.list` costs one quota unit and takes fifty ids, so `search.list` (a
+hundred units) is never needed — the ids are known. The studio list answers
+from stored state and queues a bounded background refresh for whatever is
+oldest; fifty projects never means fifty synchronous calls. A scheduled upload
+also dispatches one delayed read just past its publish time, which needs no
+scheduler to install — the persistent worker already drains that queue.
+
+Tune with `YOUTUBE_REMOTE_SYNC_TTL_MINUTES` (default 30) and
+`YOUTUBE_REMOTE_SYNC_BATCH` (default 10). **Refresh from YouTube** on the
+project page forces an immediate check.
+
+The sync is read-only in both directions. It never sets privacy and never
+re-uploads: if a public video was made private, that is the truth to report,
+not a difference to correct.
+
 ## Editing a project after it exists
 
 A Content Project stays editable for its whole life. The project page carries a

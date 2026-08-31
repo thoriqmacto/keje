@@ -10,6 +10,7 @@
 import { test, describe } from "node:test";
 import assert from "node:assert/strict";
 import {
+    GOOGLE_IMAGE_HOSTS,
     apiOrigin,
     buildContentSecurityPolicy,
     buildSecurityHeaders,
@@ -67,7 +68,7 @@ describe("buildContentSecurityPolicy with a cross-origin API", () => {
     test("allows images from the API origin for studio artwork", () => {
         assert.equal(
             directive(policy, "img-src"),
-            `img-src 'self' data: blob: ${PROD_ORIGIN}`,
+            `img-src 'self' data: blob: ${GOOGLE_IMAGE_HOSTS.join(" ")} ${PROD_ORIGIN}`,
         );
     });
 
@@ -86,7 +87,7 @@ describe("buildContentSecurityPolicy with a cross-origin API", () => {
                 "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
                 "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
                 "font-src 'self' https://fonts.gstatic.com",
-                `img-src 'self' data: blob: ${PROD_ORIGIN}`,
+                `img-src 'self' data: blob: ${GOOGLE_IMAGE_HOSTS.join(" ")} ${PROD_ORIGIN}`,
                 `connect-src 'self' ${PROD_ORIGIN}`,
                 `media-src 'self' blob: ${PROD_ORIGIN}`,
                 "frame-ancestors 'none'",
@@ -150,7 +151,10 @@ describe("buildContentSecurityPolicy without a configured API", () => {
 
     test("falls back to self-only sources rather than throwing", () => {
         assert.equal(directive(policy, "connect-src"), "connect-src 'self'");
-        assert.equal(directive(policy, "img-src"), "img-src 'self' data: blob:");
+        assert.equal(
+            directive(policy, "img-src"),
+            `img-src 'self' data: blob: ${GOOGLE_IMAGE_HOSTS.join(" ")}`,
+        );
         assert.equal(directive(policy, "media-src"), "media-src 'self' blob:");
     });
 
@@ -179,5 +183,39 @@ describe("buildSecurityHeaders", () => {
     test("emits each header exactly once", () => {
         const keys = headers.map((h) => h.key);
         assert.equal(new Set(keys).size, keys.length);
+    });
+});
+
+describe("Google image hosts", () => {
+    const csp = buildContentSecurityPolicy("https://api.example.com");
+    const imgSrc = csp.split("; ").find((d) => d.startsWith("img-src")) ?? "";
+
+    test("allows YouTube thumbnails and channel avatars", () => {
+        // These were blocked, which is why the catalog pages rendered with
+        // holes where the pictures should have been.
+        assert.match(imgSrc, /https:\/\/i\.ytimg\.com/);
+        assert.match(imgSrc, /https:\/\/yt3\.ggpht\.com/);
+        assert.match(imgSrc, /https:\/\/lh3\.googleusercontent\.com/);
+    });
+
+    test("still allows the app's own images and the API origin", () => {
+        assert.match(imgSrc, /'self'/);
+        assert.match(imgSrc, /data:/);
+        assert.match(imgSrc, /blob:/);
+        assert.match(imgSrc, /https:\/\/api\.example\.com/);
+    });
+
+    test("does not widen img-src to a wildcard", () => {
+        // Fixing a broken thumbnail must not hand every origin on the
+        // internet a place to render pixels in this page.
+        assert.doesNotMatch(imgSrc, /img-src[^;]*\*/);
+        assert.doesNotMatch(imgSrc, /img-src[^;]*\shttps:(\s|$)/);
+    });
+
+    test("grants the image hosts to img-src only", () => {
+        for (const directive of ["connect-src", "media-src", "script-src", "frame-src"]) {
+            const value = csp.split("; ").find((d) => d.startsWith(directive));
+            if (value) assert.doesNotMatch(value, /ytimg|ggpht|googleusercontent/);
+        }
     });
 });

@@ -20,7 +20,13 @@ export const DEFAULT_AUTHENTICATED_PATH = "/dashboard";
 export const ANONYMOUS_ONLY_PATHS = ["/", "/login", "/register"] as const;
 
 /** Prefixes that require a session. Mirrored by the middleware matcher. */
-export const PROTECTED_PREFIXES = ["/dashboard", "/studio", "/settings"] as const;
+export const PROTECTED_PREFIXES = [
+    "/dashboard",
+    "/studio",
+    "/settings",
+    "/youtube",
+    "/drive",
+] as const;
 
 function stripTrailingSlash(pathname: string): string {
     return pathname.length > 1 && pathname.endsWith("/") ? pathname.slice(0, -1) : pathname;
