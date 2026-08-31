@@ -51,8 +51,53 @@ class RenderQueueHealth
                 .' "media" queue. Start it with: php artisan queue:work --queue=media,default';
         }
 
+        // No direct evidence — a driver whose depth is not readable from here.
+        // The cause is the same in practice and so is the fix, so still name
+        // it: a queued render that never starts is a worker problem.
         return "This render has been waiting {$waited} without starting."
-            .' Check that the queue worker is running on the API server.';
+            .' Check that a queue worker is running on the API server and listening'
+            .' to the "media" queue: php artisan queue:work --queue=media,default';
+    }
+
+    /**
+     * What the queue itself says, for the diagnostics command.
+     *
+     * `readable` is false for any driver whose depth cannot be inspected from
+     * here — better to say so than to report zeroes that look like an empty,
+     * healthy queue.
+     *
+     * @return array{readable:bool, pending:int, reserved:int, failed:int, oldest_pending_seconds:?int}
+     */
+    public function snapshot(): array
+    {
+        $empty = [
+            'readable' => false,
+            'pending' => 0,
+            'reserved' => 0,
+            'failed' => 0,
+            'oldest_pending_seconds' => null,
+        ];
+
+        if (config('queue.default') !== 'database') {
+            return $empty;
+        }
+
+        try {
+            $table = config('queue.connections.database.table', 'jobs');
+            $media = fn () => DB::table($table)->where('queue', 'media');
+
+            $oldest = (clone $media())->whereNull('reserved_at')->min('created_at');
+
+            return [
+                'readable' => true,
+                'pending' => (clone $media())->whereNull('reserved_at')->count(),
+                'reserved' => (clone $media())->whereNotNull('reserved_at')->count(),
+                'failed' => DB::table('failed_jobs')->count(),
+                'oldest_pending_seconds' => $oldest === null ? null : (int) (time() - (int) $oldest),
+            ];
+        } catch (Throwable) {
+            return $empty;
+        }
     }
 
     /**
@@ -64,18 +109,7 @@ class RenderQueueHealth
      */
     private function hasUnreservedMediaJobs(): bool
     {
-        if (config('queue.default') !== 'database') {
-            return false;
-        }
-
-        try {
-            return DB::table(config('queue.connections.database.table', 'jobs'))
-                ->where('queue', 'media')
-                ->whereNull('reserved_at')
-                ->exists();
-        } catch (Throwable) {
-            return false;
-        }
+        return $this->snapshot()['pending'] > 0;
     }
 
     private function humanWait(int $seconds): string
