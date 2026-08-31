@@ -36,6 +36,31 @@ return [
             'serve' => true,
             'throw' => false,
             'report' => false,
+
+            /*
+             * Private, but readable by the www-data group.
+             *
+             * Without these keys Flysystem creates every directory 0700 and
+             * leaves files at the umask default. PHP-FPM then owns a tree the
+             * deploy user cannot enter even as a member of www-data, so a
+             * recording that is sitting on disk reports as missing — and a
+             * one-time chmod does not hold, because the next upload creates
+             * 0700 directories again.
+             *
+             * `visibility` matters as well as `permissions`: it is what makes
+             * Flysystem chmod a written file at all. Without it the file mode
+             * is whatever the writing process's umask allows.
+             *
+             * Group access only — never world. Directories carry setgid so
+             * files created inside keep the group rather than the creator's.
+             * mkdir applies the umask, so the group-write bit also depends on
+             * PHP-FPM and the worker running with umask 0002; see the README.
+             */
+            'visibility' => 'private',
+            'permissions' => [
+                'file' => ['private' => 0660, 'public' => 0664],
+                'dir' => ['private' => 02770, 'public' => 02775],
+            ],
         ],
 
         'public' => [

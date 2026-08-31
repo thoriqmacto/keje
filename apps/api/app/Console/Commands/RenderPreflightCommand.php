@@ -9,6 +9,7 @@ use App\Services\Media\FfmpegService;
 use App\Services\Media\FfprobeService;
 use App\Services\Media\RenderQueueHealth;
 use App\Services\Media\VideoRenderer;
+use App\Support\PathAccess;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\Storage;
 use Throwable;
@@ -25,9 +26,14 @@ use Throwable;
  */
 class RenderPreflightCommand extends Command
 {
-    protected $signature = 'render:preflight {project : The project UUID}';
+    protected $signature = 'render:preflight
+        {project : The project UUID}
+        {--permissions : Print owner, group and mode for every path checked}';
 
     protected $description = 'Check every prerequisite for rendering one project';
+
+    /** `media:preflight` reads as the natural name next to media:diagnose. */
+    protected $aliases = ['media:preflight'];
 
     private bool $ready = true;
 
@@ -105,18 +111,33 @@ class RenderPreflightCommand extends Command
 
         $absolute = Storage::disk('local')->path($relative);
 
-        if (! is_file($absolute)) {
+        // Missing, blocked and unreadable need three different fixes, and
+        // PHP reports the first two identically. Re-uploading a recording
+        // that is on disk behind a 0700 directory fixes nothing.
+        $access = PathAccess::inspect($absolute, Storage::disk('local')->path(''));
+
+        if ($access->status === PathAccess::MISSING) {
             $this->bad(ucfirst($label), "recorded as {$relative} but no file is there");
-            $this->hint("Looked in: {$absolute}");
+            $this->paths($relative, $absolute, $access);
             $this->hint('Re-upload it from the studio. If this keeps happening after a deploy, '
                 .'storage/ is not shared between releases.');
 
             return;
         }
 
-        if (! is_readable($absolute)) {
-            $this->bad(ucfirst($label), 'exists but is not readable by '.$this->user());
-            $this->hint("chown/chmod so the worker user can read: {$absolute}");
+        if ($access->status === PathAccess::BLOCKED) {
+            $this->bad(ucfirst($label), 'cannot be reached — a parent directory is closed');
+            $this->paths($relative, $absolute, $access);
+            $this->hint('Cannot traverse: '.$access->blockedAt);
+            $this->hint('The file may well be there. '.PathAccess::currentUser()
+                .' needs execute permission on that directory — see: php artisan media:diagnose');
+
+            return;
+        }
+
+        if ($access->status === PathAccess::UNREADABLE) {
+            $this->bad(ucfirst($label), 'exists but is not readable by '.PathAccess::currentUser());
+            $this->paths($relative, $absolute, $access);
 
             return;
         }
@@ -130,12 +151,18 @@ class RenderPreflightCommand extends Command
                 ? $ffprobe->inspectAudio($absolute)
                 : $ffprobe->inspectImage($absolute);
         } catch (UnusableMediaException $e) {
+            // Reachable and readable, but not decodable — a different fix
+            // again, so keep the permission facts alongside it.
             $this->bad(ucfirst($label), $e->getMessage());
-            $this->hint($absolute);
+            $this->paths($relative, $absolute, $access);
 
             return;
         } catch (Throwable $e) {
+            // Usually a missing FFmpeg toolchain. The permission facts are
+            // still the reason someone ran this, so they must not disappear
+            // because the host cannot decode media.
             $this->bad(ucfirst($label), 'could not be inspected: '.$e->getMessage());
+            $this->paths($relative, $absolute, $access);
 
             return;
         }
@@ -145,7 +172,41 @@ class RenderPreflightCommand extends Command
             : sprintf('%s, %dx%d', $size, $probe['width'], $probe['height']);
 
         $this->good(ucfirst($label), $detail);
-        $this->hint($absolute);
+        $this->paths($relative, $absolute, $access);
+    }
+
+    /**
+     * Where the file is and what its permissions are.
+     *
+     * Always shown on a failure, because that is when the modes matter;
+     * behind --permissions otherwise, so a healthy run stays short.
+     */
+    private function paths(string $relative, string $absolute, PathAccess $access): void
+    {
+        $failed = ! $access->ok();
+
+        if (! $failed && ! $this->option('permissions')) {
+            $this->hint($absolute);
+
+            return;
+        }
+
+        $this->detail('database path', $relative);
+        $this->detail('absolute path', $absolute);
+        $this->detail('exists', $access->status === PathAccess::MISSING ? 'no'
+            : ($access->status === PathAccess::BLOCKED ? 'unknown — parent not traversable' : 'yes'));
+        $this->detail('readable', $access->ok() ? 'yes' : 'no');
+
+        if ($access->owner !== null) {
+            $this->detail('owner', $access->owner);
+            $this->detail('group', (string) $access->group);
+            $this->detail('mode', (string) $access->mode);
+        }
+    }
+
+    private function detail(string $label, string $value): void
+    {
+        $this->line(sprintf('    <fg=gray>%s %s</>', str_pad($label.' ', 22, '.'), $value));
     }
 
     /** Text that does not fit is refused, never cropped — so check it here too. */

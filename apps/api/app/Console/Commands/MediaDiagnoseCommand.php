@@ -7,6 +7,7 @@ use App\Services\Google\GoogleClientFactory;
 use App\Services\Media\FfmpegService;
 use App\Services\Media\FfprobeService;
 use App\Services\Media\TemplateRegistry;
+use App\Support\PathAccess;
 use Illuminate\Console\Command;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -40,6 +41,7 @@ class MediaDiagnoseCommand extends Command
         $this->line('<options=bold>Keje media environment</>');
         $this->newLine();
 
+        $this->checkIdentity();
         $this->checkBinary('FFmpeg', config('media.ffmpeg_path'), $ffmpeg->version());
         $this->checkBinary('FFprobe', config('media.ffprobe_path'), $ffprobe->version());
         $this->checkFonts();
@@ -214,8 +216,38 @@ class MediaDiagnoseCommand extends Command
     }
 
     /**
-     * Directories both the deploy user and the PHP-FPM user must be able to
-     * write.
+     * Who is running this, and whether that identity can be trusted to prove
+     * anything about the ones that matter.
+     */
+    private function checkIdentity(): void
+    {
+        $user = PathAccess::currentUser();
+        $groups = PathAccess::currentGroups();
+        $runtime = (string) config('media.permissions.runtime_group');
+
+        $this->good('Running as', $user.($groups ? ' · groups: '.implode(', ', $groups) : ''));
+
+        if (PathAccess::isRoot()) {
+            // root passes every permission check, so a clean report here says
+            // nothing about the deploy user or www-data.
+            $this->caution('Identity', 'running as root — permission checks below always pass. '
+                .'Re-run as the deploy user to see what it really sees.');
+
+            return;
+        }
+
+        if ($groups === null) {
+            return;
+        }
+
+        in_array($runtime, $groups, true)
+            ? $this->good('Runtime group', "{$user} is a member of {$runtime}")
+            : $this->bad('Runtime group', "{$user} is not a member of {$runtime}. "
+                ."Fix on the host: sudo usermod -aG {$runtime} {$user} — then start a new login session.");
+    }
+
+    /**
+     * Directories PHP-FPM, the queue worker and the deploy user share.
      *
      * This is a shared-ownership problem, not a one-time setup step. A deploy
      * runs `view:cache` and friends as the deploy user, which leaves compiled
@@ -224,51 +256,104 @@ class MediaDiagnoseCommand extends Command
      * "tempnam(): file created in the system's temporary directory", and
      * because it happens while rendering the error page, whatever the original
      * exception was is lost with it.
+     *
+     * Private media fails the other way round: PHP-FPM creates it, and the
+     * deploy user running diagnostics cannot even enter the directory. Which
+     * is why traversal is checked separately from writing — a directory can be
+     * perfectly writable by its owner and still be a closed door to everyone
+     * else, and that reads as "the file is missing".
      */
     private function checkRuntimeWritability(): void
     {
+        $runtime = (string) config('media.permissions.runtime_group');
+
+        // needsWrite: false where this user only has to read and traverse.
         $paths = [
-            'Compiled views' => storage_path('framework/views'),
-            'Framework cache' => storage_path('framework/cache'),
-            'Sessions' => storage_path('framework/sessions'),
-            'Logs' => storage_path('logs'),
-            'Bootstrap cache' => base_path('bootstrap/cache'),
+            'Storage root' => [storage_path(), true],
+            'App storage' => [storage_path('app'), true],
+            'Private media' => [storage_path('app/private'), false],
+            'Compiled views' => [storage_path('framework/views'), true],
+            'Framework cache' => [storage_path('framework/cache'), true],
+            'Sessions' => [storage_path('framework/sessions'), true],
+            'Logs' => [storage_path('logs'), true],
+            'Bootstrap cache' => [base_path('bootstrap/cache'), true],
         ];
 
-        foreach ($paths as $label => $path) {
-            if (! is_dir($path)) {
-                $this->bad($label, "missing: {$path}");
-
-                continue;
-            }
-
-            if (! is_writable($path)) {
-                $this->bad($label, 'not writable by '.$this->currentUser().": {$path}");
-
-                continue;
-            }
-
-            $mode = @fileperms($path);
-
-            // Group-write is what lets the deploy user and PHP-FPM share these
-            // directories. Without it, whichever writes first locks the other
-            // out on the next deploy.
-            if ($mode !== false && ($mode & 0o020) === 0) {
-                $this->caution(
-                    $label,
-                    sprintf(
-                        'writable, but not group-writable (%s %s:%s) — PHP-FPM may be locked out',
-                        substr(sprintf('%o', $mode), -4),
-                        $this->ownerName(@fileowner($path)),
-                        $this->groupName(@filegroup($path)),
-                    ),
-                );
-
-                continue;
-            }
-
-            $this->good($label, 'writable');
+        foreach ($paths as $label => [$path, $needsWrite]) {
+            $this->checkSharedDirectory($label, $path, $needsWrite, $runtime);
         }
+    }
+
+    private function checkSharedDirectory(string $label, string $path, bool $needsWrite, string $runtime): void
+    {
+        if (! is_dir($path)) {
+            $this->bad($label, "missing: {$path}");
+
+            return;
+        }
+
+        $user = PathAccess::currentUser();
+        $owner = PathAccess::owner($path) ?? '?';
+        $group = PathAccess::group($path) ?? '?';
+        $mode = PathAccess::mode($path) ?? '?';
+        $facts = "owner {$owner}, group {$group}, mode {$mode}";
+
+        // Traverse first: without it nothing inside can be reached, and every
+        // other check below would be answering the wrong question.
+        if (! is_executable($path)) {
+            $this->bad($label, "not traversable by {$user} — {$facts}");
+            $this->fix($path, $group === $runtime
+                ? "{$user} belongs to {$group}, but the group has no execute bit."
+                : "The directory belongs to group {$group}, not {$runtime}.");
+
+            return;
+        }
+
+        if (! is_readable($path)) {
+            $this->bad($label, "not readable by {$user} — {$facts}");
+            $this->fix($path, null);
+
+            return;
+        }
+
+        if ($needsWrite && ! is_writable($path)) {
+            $this->bad($label, "not writable by {$user} — {$facts}");
+            $this->fix($path, null);
+
+            return;
+        }
+
+        // Group-write plus setgid is what keeps this working after the next
+        // file is created. Without setgid, whoever writes next stamps their
+        // own primary group on it and locks the other identity out again.
+        $perms = @fileperms($path);
+        $groupWritable = $perms !== false && ($perms & 0o020) !== 0;
+
+        if ($needsWrite && ! $groupWritable) {
+            $this->caution($label, "writable, but not group-writable — {$facts}");
+            $this->fix($path, 'Whichever user writes first will lock the other out.');
+
+            return;
+        }
+
+        if (! PathAccess::hasSetgid($path)) {
+            $this->caution($label, "accessible, but setgid is not set — {$facts}");
+            $this->fix($path, 'New files will take the creator\'s group instead of '.$runtime.'.');
+
+            return;
+        }
+
+        $this->good($label, $facts);
+    }
+
+    /** The host command that fixes it — never run from here. */
+    private function fix(string $path, ?string $because): void
+    {
+        if ($because !== null) {
+            $this->line("      <fg=gray>{$because}</>");
+        }
+
+        $this->line("      <fg=gray>Suggested fix: sudo chmod 2770 {$path}</>");
     }
 
     private function currentUser(): string
