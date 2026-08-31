@@ -23,6 +23,7 @@ class RenderJob extends Model
     {
         return [
             'status' => RenderJobStatus::class,
+            'post_actions' => 'array',
             'started_at' => 'datetime',
             'finished_at' => 'datetime',
             'output_duration' => 'float',

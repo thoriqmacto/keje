@@ -5,6 +5,7 @@ use App\Http\Controllers\Api\V1\ContentProjectController;
 use App\Http\Controllers\Api\V1\ContentTopicController;
 use App\Http\Controllers\Api\V1\DriveCatalogController;
 use App\Http\Controllers\Api\V1\GoogleIntegrationController;
+use App\Http\Controllers\Api\V1\ProjectAudioEditController;
 use App\Http\Controllers\Api\V1\ProjectMediaController;
 use App\Http\Controllers\Api\V1\ProjectPublicationController;
 use App\Http\Controllers\Api\V1\ProjectRenderController;
@@ -84,6 +85,13 @@ Route::prefix('v1')->group(function () {
 
             // Source media. ffprobe validates these, not the file extension.
             Route::post('/audio', [ProjectMediaController::class, 'storeAudio']);
+
+            // Removed sections. Non-destructive: the uploaded recording is
+            // never rewritten, so this only records decisions.
+            Route::put('/audio-edits', [ProjectAudioEditController::class, 'update']);
+            // Authenticated source playback, so the owner can find the exact
+            // timestamps to cut. Range-capable; never exposes a path.
+            Route::get('/audio', [ProjectMediaController::class, 'streamAudio']);
             Route::post('/background', [ProjectMediaController::class, 'storeBackground']);
 
             // Rendering is always queued; FFmpeg never runs in a request.

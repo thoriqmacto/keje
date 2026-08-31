@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Enums\GoogleService;
 use App\Enums\RenderJobStatus;
 use App\Enums\RenderStatus;
 use App\Exceptions\Media\TextDoesNotFitException;
@@ -9,6 +10,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\ContentProjectResource;
 use App\Jobs\RenderContentProjectJob;
 use App\Models\ContentProject;
+use App\Models\GoogleConnection;
 use App\Models\RenderJob;
 use App\Services\Media\RenderQueueHealth;
 use App\Services\Media\VideoRenderer;
@@ -63,6 +65,8 @@ class ProjectRenderController extends Controller
         // nowhere obvious to look.
         $this->assertSourcesExist($project);
 
+        $postActions = $this->postActions($request, $project);
+
         $project->load(['topic', 'speaker']);
 
         try {
@@ -73,7 +77,7 @@ class ProjectRenderController extends Controller
 
         // Claim the render inside a transaction so two rapid clicks cannot
         // both enqueue an attempt.
-        $renderJob = DB::transaction(function () use ($project): ?RenderJob {
+        $renderJob = DB::transaction(function () use ($project, $postActions): ?RenderJob {
             $fresh = ContentProject::whereKey($project->id)->lockForUpdate()->first();
 
             if ($fresh === null || $fresh->render_status->isInFlight()) {
@@ -89,6 +93,10 @@ class ProjectRenderController extends Controller
             return $fresh->renderJobs()->create([
                 'status' => RenderJobStatus::Queued,
                 'progress_percent' => 0,
+                // Snapshotted with the attempt, not left on the project: the
+                // job may sit on the queue for a while, and what happens after
+                // it finishes must be what was asked for when it was queued.
+                'post_actions' => $postActions,
             ]);
         });
 
@@ -105,6 +113,32 @@ class ProjectRenderController extends Controller
             'message' => 'Render queued.',
             'data' => new ContentProjectResource($project->fresh(['topic', 'speaker'])),
         ], 202);
+    }
+
+    /**
+     * What to do once the render succeeds.
+     *
+     * Only ever what is actually possible: asking for a YouTube upload while
+     * YouTube is disconnected would queue a job that can only fail, so an
+     * unavailable destination is dropped here rather than discovered by a
+     * worker twenty minutes later.
+     *
+     * @return array{drive_backup: bool, youtube_upload: bool}
+     */
+    private function postActions(Request $request, ContentProject $project): array
+    {
+        $requested = (array) $request->input('post_actions', []);
+        $connections = GoogleConnection::where('user_id', $project->user_id)->get();
+
+        $connected = fn (GoogleService $service): bool => $connections
+            ->firstWhere('service', $service) !== null;
+
+        return [
+            'drive_backup' => (bool) ($requested['drive_backup'] ?? false)
+                && $connected(GoogleService::Drive),
+            'youtube_upload' => (bool) ($requested['youtube_upload'] ?? false)
+                && $connected(GoogleService::YouTube),
+        ];
     }
 
     /**

@@ -45,6 +45,11 @@ class ContentProjectSummaryResource extends JsonResource
                 'label' => $this->render_status->label(),
                 // Supplied by the index query's subselect; 0 when never rendered.
                 'progress' => (int) ($this->render_progress ?? 0),
+                // The output was produced from inputs that have since
+                // changed, so it no longer represents this project. Not an
+                // error and not a reason to delete anything — the file is
+                // still a real render of an earlier revision.
+                'stale' => app(\App\Services\Media\RenderInputFingerprint::class)->isStale($this->resource),
             ],
             'drive' => [
                 'status' => $this->drive_status->value,

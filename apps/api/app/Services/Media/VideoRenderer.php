@@ -39,6 +39,9 @@ class VideoRenderer
         private readonly TextLayoutService $layout,
         private readonly FontMetrics $fonts,
         private readonly FfmpegService $ffmpeg,
+        // Appended rather than prepended: the render tests construct this
+        // positionally, and the container resolves either way.
+        private readonly AudioEditService $audioEdits,
     ) {}
 
     /**
@@ -119,19 +122,30 @@ class VideoRenderer
         $tempOutput = $disk->path("{$dir}/temp/output.mp4");
         $finalOutput = "{$dir}/renders/output.mp4";
 
+        // Removed sections are decisions, not edits: the source MP3 is never
+        // rewritten, so the cut list is applied here, at encode time.
+        $sourceDuration = (float) $project->source_audio_duration;
+        $cuts = (array) ($project->audio_edits ?? []);
+        $segments = $this->audioEdits->keptSegments($cuts, $sourceDuration);
+        $effectiveDuration = $this->audioEdits->keptDuration($cuts, $sourceDuration);
+
         $arguments = $this->buildArguments(
             layout: $layout,
             audioPath: $audioPath,
             backgroundPath: $backgroundPath,
             textPaths: $textPaths,
             outputPath: $tempOutput,
-            duration: (float) $project->source_audio_duration,
+            duration: $effectiveDuration,
             renderSettings: (array) ($project->render_settings ?? []),
+            audioSegments: $segments,
         );
 
         $result = $this->ffmpeg->run(
             arguments: $arguments,
-            totalDuration: $project->source_audio_duration,
+            // Progress is a fraction of what will actually be encoded. A job
+            // measured against the original recording would report 92% and
+            // stop when five minutes have been cut out of it.
+            totalDuration: $effectiveDuration,
             onProgress: $onProgress,
         );
 
@@ -149,7 +163,7 @@ class VideoRenderer
         return [
             'output_path' => $finalOutput,
             'size' => (int) $disk->size($finalOutput),
-            'duration' => (float) $project->source_audio_duration,
+            'duration' => $effectiveDuration,
             'exit_code' => $result['exit_code'],
             'log' => $result['log'],
         ];
@@ -175,6 +189,7 @@ class VideoRenderer
         array $textPaths,
         string $outputPath,
         ?float $duration = null,
+        array $audioSegments = [],
         array $renderSettings = [],
     ): array {
         $video = config('media.video');
@@ -281,7 +296,18 @@ class VideoRenderer
             );
         }
 
-        $filters[] = '[1:a]'.implode(',', $audioFilters).',asplit=2[aout][awave]';
+        // Cut before everything else, so loudness and the waveform both see
+        // the edited audio. A waveform drawn from the removed content would
+        // not match what is heard.
+        $cutFilter = $this->audioEdits->buildCutFilter($audioSegments, '[1:a]', '[acut]');
+        $audioSource = '[1:a]';
+
+        if ($cutFilter !== '') {
+            $filters[] = $cutFilter;
+            $audioSource = '[acut]';
+        }
+
+        $filters[] = $audioSource.implode(',', $audioFilters).',asplit=2[aout][awave]';
 
         // Waveform. showwaves already emits transparent RGBA, so it composites
         // straight over the frame with no colour keying.

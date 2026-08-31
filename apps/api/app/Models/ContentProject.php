@@ -57,6 +57,11 @@ class ContentProject extends Model
     {
         return [
             'media_pruned_at' => 'datetime',
+            'audio_edits' => 'array',
+            'youtube_remote_publish_at' => 'datetime',
+            'youtube_remote_synced_at' => 'datetime',
+            'thumbnail_generated_at' => 'datetime',
+            'youtube_thumbnail_synced_at' => 'datetime',
             'youtube_playlist_added_at' => 'datetime',
             'render_status' => RenderStatus::class,
             'drive_status' => DriveStatus::class,
@@ -111,6 +116,38 @@ class ContentProject extends Model
                 ->latest('id')
                 ->limit(1),
             ]);
+    }
+
+    /**
+     * The cut list with its consequences worked out.
+     *
+     * Kept on the model so the resource, the renderer and the studio all read
+     * the same numbers rather than each recomputing them slightly differently.
+     *
+     * @return array{cuts: list<array<string, mixed>>, source_duration: ?float, removed_duration: float, effective_duration: ?float}
+     */
+    public function audioEditSummary(): array
+    {
+        $cuts = array_values((array) ($this->audio_edits ?? []));
+        $source = $this->source_audio_duration === null ? null : (float) $this->source_audio_duration;
+
+        if ($source === null) {
+            return [
+                'cuts' => $cuts,
+                'source_duration' => null,
+                'removed_duration' => 0.0,
+                'effective_duration' => null,
+            ];
+        }
+
+        $edits = app(\App\Services\Media\AudioEditService::class);
+
+        return [
+            'cuts' => $cuts,
+            'source_duration' => $source,
+            'removed_duration' => $edits->removedDuration($cuts, $source),
+            'effective_duration' => $edits->keptDuration($cuts, $source),
+        ];
     }
 
     /** Root of this project's private storage tree, relative to the local disk. */
