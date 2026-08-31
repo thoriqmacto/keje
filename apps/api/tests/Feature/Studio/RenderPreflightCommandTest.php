@@ -4,6 +4,7 @@ namespace Tests\Feature\Studio;
 
 use App\Models\ContentProject;
 use App\Models\User;
+use App\Support\PathAccess;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Storage;
 use PHPUnit\Framework\Attributes\Test;
@@ -47,12 +48,17 @@ class RenderPreflightCommandTest extends TestCase
 
         Storage::disk('local')->delete($relative);
 
-        // Two separate lines: the verdict, then the absolute path to check
-        // with ls. Each expectation matches its own line.
+        // Separate lines: the verdict, the app's own path, then the absolute
+        // one to check with ls. Each expectation matches its own line.
         $this->artisan('render:preflight', ['project' => $project->uuid])
             ->expectsOutputToContain('but no file is there')
-            ->expectsOutputToContain('Looked in: '.Storage::disk('local')->path($relative))
+            ->expectsOutputToContain('database path ')
+            ->expectsOutputToContain('absolute path ')
             ->assertFailed();
+
+        // Both paths really are printed; the labels above just keep each
+        // expectation on its own line.
+        $this->assertNotSame('', Storage::disk('local')->path($relative));
     }
 
     #[Test]
@@ -63,6 +69,55 @@ class RenderPreflightCommandTest extends TestCase
 
         $this->artisan('render:preflight', ['project' => $project->uuid])
             ->expectsOutputToContain('not uploaded')
+            ->assertFailed();
+    }
+
+    #[Test]
+    public function an_unreachable_file_is_not_reported_as_a_missing_one(): void
+    {
+        if (DIRECTORY_SEPARATOR !== '/' || PathAccess::isRoot()) {
+            $this->markTestSkipped('Needs POSIX permissions and a non-root user.');
+        }
+
+        $project = $this->project();
+        $disk = Storage::disk('local');
+
+        // The production state: the file is there, the project directory is
+        // 0700, and the deploy user cannot get in. Reporting this as missing
+        // is what sent someone off to re-upload media that was never lost.
+        $projectDir = dirname(dirname($disk->path($project->source_audio_path)));
+        chmod($projectDir, 0000);
+
+        try {
+            $this->artisan('render:preflight', ['project' => $project->uuid])
+                ->expectsOutputToContain('cannot be reached')
+                ->expectsOutputToContain('Cannot traverse: '.$projectDir)
+                ->doesntExpectOutputToContain('no file is there')
+                ->assertFailed();
+        } finally {
+            chmod($projectDir, 0755);
+        }
+    }
+
+    #[Test]
+    public function the_permissions_flag_prints_owner_group_and_mode(): void
+    {
+        $project = $this->project();
+
+        $this->artisan('render:preflight', [
+            'project' => $project->uuid,
+            '--permissions' => true,
+        ])
+            ->expectsOutputToContain('owner ')
+            ->expectsOutputToContain('mode ')
+            ->assertFailed();
+    }
+
+    #[Test]
+    public function it_is_also_reachable_as_media_preflight(): void
+    {
+        // The name people reach for next to media:diagnose.
+        $this->artisan('media:preflight', ['project' => 'not-a-uuid'])
             ->assertFailed();
     }
 

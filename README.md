@@ -393,6 +393,36 @@ See `apps/web/.env.local.example`.
 - **`Call to undefined method …Controller::someMethod()` after a deploy.** The deploy died before its cache-building steps, so `bootstrap/cache` still holds routes and config compiled from the *previous* release while the code on disk is the new one. The stale route cache points at controller methods that release renamed or removed. Fix with `php artisan optimize:clear`, then rebuild: `php artisan config:cache && php artisan route:cache && php artisan view:cache`. The deploy workflow now clears these automatically when a run fails.
 - **An OAuth callback, password-reset link or verification redirect points at `http://localhost:3000` in production.** `php artisan config:cache` stops Laravel from loading `.env`, so `env()` returns null everywhere outside `config/*.php` and falls back to its default. Every browser-facing URL the API builds comes from `config('app.frontend_url')` for this reason — set `FRONTEND_URL` in `apps/api/.env` and re-run `php artisan config:cache`. A test (`ConfigCachingTest`) fails the build if `env()` is reintroduced into runtime code.
 - **A recording upload comes back `422` and the file is fine.** Two different server problems produce this, and the response body now tells them apart. *"The recording did not finish uploading…"* means PHP dropped the file before Laravel saw it: `upload_max_filesize` is smaller than the recording (`post_max_size` too large to trigger a `413`, so it looks like a validation failure). The message names both current values — raise them per [Upload limits](#upload-limits), reload PHP-FPM, and check `client_max_body_size` in Nginx while you are there. *"The media toolchain is unavailable on this server"* with a `503` means ffprobe is missing or `MEDIA_FFPROBE_PATH` is wrong; without it every upload looks corrupt. `php artisan media:diagnose` checks both, including the PHP limits against `MEDIA_MAX_AUDIO_MB`, so run it after any deploy.
+- **Media reports as missing but `sudo` can see it.** A permission problem, not a lost file: read permission on the file is useless without **execute on every directory above it**, and PHP cannot tell the two apart — `is_file()` returns false either way. `php artisan render:preflight <project-uuid>` now distinguishes them and names the directory that blocks:
+
+  ```
+  ✖ Audio              cannot be reached — a parent directory is closed
+    database path ........ content/<uuid>/source/audio.mp3
+    absolute path ........ /var/www/keje/apps/api/storage/app/private/content/<uuid>/source/audio.mp3
+    exists ............... unknown — parent not traversable
+    owner ................ www-data
+    group ................ www-data
+    mode ................. 0700
+    Cannot traverse: /var/www/keje/apps/api/storage/app/private/content/<uuid>
+  ```
+
+  From a shell, as the user that is failing — not via `sudo`, which passes every check:
+
+  ```bash
+  whoami
+  id                                    # is www-data in the group list?
+  getent group www-data                 # is the deploy user in the member list?
+
+  # Every component from / down, with the first closed door marked:
+  namei -l /var/www/keje/apps/api/storage/app/private/content/<uuid>/source/audio.mp3
+
+  stat -c '%A %a %U:%G %n' storage storage/app storage/app/private
+
+  test -r <absolute-path> && echo readable || echo NOT readable
+  sudo -u www-data test -r <absolute-path> && echo www-data ok || echo www-data blocked
+  ```
+
+  `id` reads the current session: after `usermod -aG www-data deploy` the group only appears in a **new login session**. See [Permissions](#permissions) for the fix and why a one-time `chmod` does not hold.
 - **A render fails with "The source audio is missing from storage".** The database says the file is there and the disk disagrees. It is almost never the upload: check `php artisan render:preflight <project-uuid>`, which prints the absolute path it looked for so you can `ls` it. The usual causes are a deploy that replaced `storage/` (releases must share it — symlink `storage/app` to a persistent directory, never ship a fresh one per release), or a worker running from a different directory than PHP-FPM. Recovery is to re-upload the recording from the studio and render again; the render endpoint now refuses to queue a project whose recorded files are gone, so you get an immediate message instead of a job that fails minutes later.
 - **A render is stuck and you want to know where.** Run `php artisan render:status` on the API server. It prints the media queue's depth and the recent attempts, and gives each one a verdict — waiting normally, nothing is consuming the queue, claimed by a worker that then died, encoding, or failed with its error. Add `--log` for the FFmpeg output of an attempt, `--project=<uuid>` to narrow it. It is read-only; it never re-queues or cancels anything.
 - **A render stays queued at 0% forever.** Nothing is consuming the `media` queue. Renders are dispatched with `onQueue('media')`, so a worker started as a plain `php artisan queue:work` listens to `default` only and never touches them — no error, just a job that waits. The studio now says so after two minutes instead of showing a progress bar that implies work is happening, and `php artisan media:diagnose` reports the pending backlog. Start the worker with the queue named — `php artisan queue:work --queue=media,default --timeout=7200 --tries=2` — or check Supervisor is running it, per [Queue worker](#queue-worker). Nothing is lost while it waits: the queued attempt runs as soon as a worker appears. `php artisan queue:failed` lists attempts that ran and failed, which is a different problem.
@@ -765,7 +795,7 @@ php artisan media:diagnose      # verifies the whole media environment
 sudo supervisorctl restart keje-worker:*
 ```
 
-`php artisan media:diagnose` checks the FFmpeg and FFprobe binaries and versions, both font files, the template definitions and their assets, private storage writability, free disk space, PHP's upload limits, the queue driver and its backlog, and the Google configuration. It exits non-zero when something critical is missing, so it can gate a deploy.
+`php artisan media:diagnose` checks the CLI identity and its group membership, the FFmpeg and FFprobe binaries and versions, both font files, the template definitions and their assets, ownership, mode, traversability and setgid on every shared directory, free disk space, PHP's upload limits, the queue driver and its backlog, and the Google configuration. Run it **as the deploy user** — as `root` every permission check passes and proves nothing, which it will tell you. It exits non-zero when something critical is missing, so it can gate a deploy.
 
 For a render that is already stuck rather than an environment that is misconfigured, two commands answer it:
 
@@ -805,6 +835,7 @@ directory=/var/www/keje/apps/api
 autostart=true
 autorestart=true
 user=www-data
+umask=0002
 numprocs=1
 redirect_stderr=true
 stdout_logfile=/var/log/keje/worker.log
@@ -812,6 +843,17 @@ stopwaitsecs=7300
 ```
 
 One worker is right for a single-operator setup: renders are CPU-bound and running two in parallel makes both slower. `stopwaitsecs` must exceed the render timeout so a deploy never kills a render mid-encode.
+
+`user=www-data` is not optional bookkeeping — it decides who owns every rendered
+MP4. A worker started by hand as another user (`php artisan queue:work` over
+SSH as `deploy`, say) creates a second ownership class inside the same tree, and
+those files are then unreachable from the web request that wants to serve them.
+Confirm who is actually running it:
+
+```bash
+ps -eo user,group,pid,cmd | grep '[q]ueue:work'
+sudo supervisorctl status keje-worker:*
+```
 
 ### Upload limits
 
@@ -835,31 +877,151 @@ Keje does not modify OS configuration — set these yourself.
 
 ### Permissions
 
-`storage` and `bootstrap/cache` are written by **two** users: the deploy user
-(`view:cache`, `config:cache`, migrations) and the PHP-FPM user at runtime.
-Getting the owner right once is not enough — without the setgid bit, files the
-deploy writes are owned by the deploy user's own group and PHP-FPM cannot
-rewrite them on the next request.
+Three OS identities touch the same directories, and they are not the same user:
 
-```bash
-sudo chown -R www-data:www-data storage bootstrap/cache
-sudo chmod -R 775 storage bootstrap/cache
-# setgid: files created later inherit the directory's group, not the creator's.
-sudo find storage bootstrap/cache -type d -exec chmod g+s {} +
-# Let the deploy user write them too.
-sudo usermod -aG www-data <deploy-user>
+| Identity | Is | Does |
+|---|---|---|
+| PHP-FPM | `www-data` | writes uploaded audio and artwork |
+| Queue worker (Supervisor) | `www-data` | runs FFmpeg, writes the rendered MP4 |
+| Deploy / SSH | `deploy`, **in group `www-data`** | migrations, `config:cache`, `media:diagnose`, `render:preflight` |
+
+They meet through the shared group `www-data`. Set `MEDIA_RUNTIME_GROUP` if
+yours is named differently — it is only ever compared against, never applied:
+**Keje never calls `chmod` or `chown` itself.**
+
+#### The access each one needs
+
+|  | `deploy` | PHP-FPM (`www-data`) | worker (`www-data`) |
+|---|---|---|---|
+| `storage/app/private` | R/X | R/W/X | R/W/X |
+| source audio, background | R | R/W | R |
+| rendered MP4 | R | R | R/W |
+| `storage/logs` | R/W | R/W | R/W |
+| `storage/framework/{views,cache,sessions}` | R/W | R/W | R/W |
+| `bootstrap/cache` | R/W | R/W | R/W |
+
+`deploy` needs only **read and traverse** on private media: it diagnoses, it
+does not produce media. It needs **write** on the framework caches because
+`config:cache` and `view:cache` run as `deploy` while PHP-FPM rewrites the same
+files at runtime — that pair is why setgid matters.
+
+`X` is not a detail. **Read permission on a file is useless without execute on
+every directory above it**, and a directory that cannot be entered makes the
+file inside it indistinguishable from one that does not exist.
+
+#### Target modes
+
+```
+directories   2770   owner rwx, group rwx, setgid, world nothing
+files         0660   owner rw,  group rw,  world nothing
 ```
 
-The deploy workflow re-applies the group-write and setgid bits to these
-directories after each run, but only as a best effort: once `storage` belongs
-to the web user, the deploy user no longer owns it and `chmod` is refused —
-only an owner may change a file's mode. That refusal is ignored, because on
-such a host the bits are already correct. Establish them with the commands
-above; the workflow is a safety net for hosts where the deploy user owns
-`storage` itself.
+Never world-readable: `storage/app/private` holds unpublished lecture audio.
+Never `777`.
 
-`php artisan media:diagnose` reports the state of every one of these
-directories.
+Setgid (the `2`) is what makes this survive. A new file takes the *creator's*
+primary group by default, so a render written by `www-data` into a directory
+owned by `deploy` would be unreachable the other way round. With setgid on the
+directory, every child inherits the directory's group instead — and new
+subdirectories inherit the setgid bit too, so it propagates without help.
+
+#### Why a one-time chmod is not enough
+
+Laravel's `local` disk previously specified no visibility, and Flysystem's
+default is private: **every directory it created came out `0700`**, whatever the
+parent looked like. Setgid propagated the group correctly and it still did not
+help, because `0700` grants the group nothing:
+
+```
+storage/app/private          2770 www-data:www-data   <- correct, set by hand
+  content/<uuid>             2700 www-data:www-data   <- created by PHP-FPM
+    source/audio.mp3         0664 www-data:www-data
+```
+
+`deploy` is in `www-data` and still cannot enter `content/<uuid>`, so
+`render:preflight` reports the recording as missing while `sudo` finds it
+immediately. The next upload recreates the problem however many times you
+re-run `chmod`.
+
+`config/filesystems.php` now sets this explicitly:
+
+```php
+'visibility' => 'private',
+'permissions' => [
+    'file' => ['private' => 0660, 'public' => 0664],
+    'dir'  => ['private' => 02770, 'public' => 02775],
+],
+```
+
+`visibility` matters as much as `permissions`: without it Flysystem never
+chmods a written file at all, leaving the mode to the writing process's umask.
+
+#### umask
+
+`chmod` is absolute, but **`mkdir` is masked**. At the common default of `022`
+the group-write bit is stripped and `02770` lands as `2750` — readable and
+traversable by the group, but not writable. Set `0002` for both runtime
+services so directories keep group-write:
+
+```ini
+; /etc/php/8.2/fpm/pool.d/www.conf
+[www]
+umask = 0002
+```
+
+Supervisor passes the environment through, so set it on the worker too:
+
+```ini
+[program:keje-worker]
+umask=0002
+```
+
+Verify: `sudo chmod 2770` on a parent, upload something, then check the new
+directory really is `2770` and not `2750`.
+
+#### One-time remediation
+
+Run once, on the host, after checking the current layout with
+`php artisan media:diagnose`:
+
+```bash
+# 1. Group membership. Requires a NEW login session to take effect —
+#    `id` in the current shell will keep showing the old groups.
+sudo usermod -aG www-data deploy
+
+# 2. Shared group on the runtime trees only. Not the repo, not vendor,
+#    not .env.
+sudo chgrp -R www-data storage bootstrap/cache
+
+# 3. Directories: group rwx + setgid, nothing for the world.
+sudo find storage bootstrap/cache -type d -exec chmod 2770 {} +
+
+# 4. Files: group rw, nothing for the world.
+sudo find storage bootstrap/cache -type f -exec chmod 0660 {} +
+
+# 5. Owner stays the web user; the deploy user reaches them via the group.
+sudo chown -R www-data:www-data storage bootstrap/cache
+```
+
+Then log out and back in, and confirm with `php artisan media:diagnose` **as
+the deploy user** — running it as `root` proves nothing, because root passes
+every permission check. The command says so when you do.
+
+Do not apply any of this to `.env`, the repository files, `vendor/` or
+`node_modules/`.
+
+#### What survives what
+
+| Event | Why it stays correct |
+|---|---|
+| New browser upload | disk config sets `2770`/`0660`; umask `0002` keeps group-write |
+| New render | same config; the worker is the same user as PHP-FPM |
+| Deploy | `deploy` is in `www-data`; setgid keeps the group off the creator |
+| Queue restart | Supervisor `user=www-data`, `umask=0002` |
+| Reboot | nothing here is runtime state |
+
+The deploy workflow still re-applies group-write and setgid as a safety net,
+but it is not the mechanism — the disk config is.
 
 ### Production environment
 

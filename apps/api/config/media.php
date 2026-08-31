@@ -179,6 +179,23 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Filesystem identities
+    |--------------------------------------------------------------------------
+    |
+    | Three OS users touch the same directories: PHP-FPM writes uploads, the
+    | queue worker writes renders, and the deploy user runs artisan. They meet
+    | through a shared group — PHP-FPM's — which the deploy user must belong
+    | to. Diagnostics compare against this name; nothing here changes any
+    | permission, and no command in this app ever calls chmod or chown.
+    |
+    */
+
+    'permissions' => [
+        'runtime_group' => env('MEDIA_RUNTIME_GROUP', 'www-data'),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Playback links
     |--------------------------------------------------------------------------
     |
