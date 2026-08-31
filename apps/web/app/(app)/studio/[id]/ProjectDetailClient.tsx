@@ -24,6 +24,13 @@ import { ProjectStatusBadge } from "@/components/studio/status-badge";
 import { TemplateTextForm } from "@/components/studio/template-text-form";
 import { YouTubeMetadataForm } from "@/components/studio/youtube-form";
 import { YouTubeDestinationSummary } from "@/components/studio/youtube-destination";
+import { YouTubeCorrections } from "@/components/studio/youtube-corrections";
+import { YouTubeHistory } from "@/components/studio/youtube-history";
+import {
+    youtubeBadgeLabel,
+    youtubeBadgeStatus,
+    type YouTubeBadgeInput,
+} from "@/lib/studio/youtube-badge";
 import { ProjectPropertiesCard } from "@/components/studio/project-properties";
 import { AudioEditorCard } from "@/components/studio/audio-editor";
 import { PostRenderOptions } from "@/components/studio/post-render-options";
@@ -45,7 +52,24 @@ import {
 } from "@/lib/studio/api";
 import { formatBytes, formatDateTime, formatDuration } from "@/lib/studio/format";
 import { getMediaLinks, useAuthedObjectUrl, type MediaLinks } from "@/lib/studio/media";
-import type { YouTubeMetadata } from "@/lib/types/studio";
+import type { ContentProject, YouTubeMetadata } from "@/lib/types/studio";
+
+/**
+ * The badge's inputs on the detail page.
+ *
+ * The full project carries the replacement inline rather than the two booleans
+ * the list summary uses, so this adapts it to the same shared function — one
+ * place decides what the badge says, on both screens.
+ */
+function detailBadge(project: ContentProject): YouTubeBadgeInput {
+    return {
+        label: project.youtube.label,
+        remoteLabel: project.youtube.remote.label,
+        isReplacing: project.replacement.active !== null,
+        replacementFailed: project.replacement.active?.is_failed ?? false,
+        hasVideo: project.youtube.video_id !== null,
+    };
+}
 
 export default function ProjectDetailClient({ projectId }: { projectId: string }) {
     const router = useRouter();
@@ -225,8 +249,8 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                     />
                     <ProjectStatusBadge
                         pipeline="youtube"
-                        status={project.youtube.status}
-                        label={`YouTube: ${project.youtube.remote.label ?? project.youtube.label}`}
+                        status={youtubeBadgeStatus(detailBadge(project), project.youtube.status)}
+                        label={`YouTube: ${youtubeBadgeLabel(detailBadge(project))}`}
                     />
                 </div>
             </div>
@@ -570,7 +594,7 @@ function PublicationCard({
     onYouTube,
     onChanged,
 }: {
-    project: import("@/lib/types/studio").ContentProject;
+    project: ContentProject;
     onDrive: () => Promise<void>;
     onYouTube: () => Promise<void>;
     onChanged: () => void;
@@ -645,8 +669,8 @@ function PublicationCard({
                         <span className="text-sm font-medium">YouTube</span>
                         <ProjectStatusBadge
                             pipeline="youtube"
-                            status={project.youtube.status}
-                            label={project.youtube.label}
+                            status={youtubeBadgeStatus(detailBadge(project), project.youtube.status)}
+                            label={youtubeBadgeLabel(detailBadge(project))}
                         />
                     </div>
                     {project.youtube.error && (
@@ -716,6 +740,25 @@ function PublicationCard({
                             <dd>{formatDateTime(project.youtube.remote.synced_at)}</dd>
                         </dl>
                     )}
+
+                    {/* The video on YouTube came from an older render, so
+                        editing its description would fix nothing. Said here,
+                        next to the video, rather than in the corrections
+                        block where it would read as a caption to a button. */}
+                    {project.youtube.video_is_outdated && (
+                        <p className="text-xs text-amber-700 dark:text-amber-400">
+                            The current render differs from the video on YouTube.
+                        </p>
+                    )}
+
+                    {/* Two corrections, deliberately not one button: editing
+                        the metadata keeps the URL and the comments, replacing
+                        the video cannot. */}
+                    {project.youtube.video_id && (
+                        <YouTubeCorrections project={project} onChanged={onChanged} />
+                    )}
+
+                    <YouTubeHistory project={project} />
 
                     {/* Choosing a frame is part of publishing, and only
                         possible once there is a render to take one from. */}

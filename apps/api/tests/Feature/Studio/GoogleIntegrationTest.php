@@ -15,6 +15,7 @@ use App\Services\Google\GoogleClientFactory;
 use App\Services\Google\GoogleDriveService;
 use App\Services\Google\GoogleNotConnectedException;
 use App\Services\Google\GoogleOAuthService;
+use App\Services\Google\YouTubeMetadataBuilder;
 use App\Services\Google\YouTubePlaylistAssigner;
 use App\Services\Google\YouTubeService;
 use App\Services\Media\MediaRetention;
@@ -618,7 +619,7 @@ class GoogleIntegrationTest extends TestCase
 
         $this->expectException(GoogleNotConnectedException::class);
 
-        (new YouTubeService($clients))->upload($user->refresh(), $project, $path);
+        (new YouTubeService($clients, app(YouTubeMetadataBuilder::class)))->upload($user->refresh(), $project, $path);
     }
 
     // ── Pipelines stay independent ──────────────────────────────────────────
@@ -780,7 +781,7 @@ class GoogleIntegrationTest extends TestCase
         $user = User::factory()->create();
         $this->connect($user, GoogleService::YouTube, ['youtube_channel_id' => 'UCwrongChannel']);
 
-        $service = new YouTubeService(app(GoogleClientFactory::class));
+        $service = new YouTubeService(app(GoogleClientFactory::class), app(YouTubeMetadataBuilder::class));
 
         $this->expectException(\RuntimeException::class);
         $this->expectExceptionMessage('not the expected channel');
@@ -794,7 +795,7 @@ class GoogleIntegrationTest extends TestCase
         $user = User::factory()->create();
         $this->connect($user, GoogleService::YouTube);
 
-        $service = new YouTubeService(app(GoogleClientFactory::class));
+        $service = new YouTubeService(app(GoogleClientFactory::class), app(YouTubeMetadataBuilder::class));
         $service->assertExpectedChannel($user->refresh());
 
         $this->assertTrue(true, 'No exception for the expected channel.');

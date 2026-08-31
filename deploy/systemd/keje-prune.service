@@ -1,0 +1,35 @@
+# Frees local media for projects past their correction window.
+#
+# Entirely optional. The Finalise button on a project releases its files
+# immediately, and that is the path most projects take — the person who just
+# watched the video knows whether it is right. This exists for the ones nobody
+# gets round to finalising, because pruning is otherwise opportunistic: it runs
+# when a backup or upload finishes, so a project that was still inside its
+# window at that moment is never revisited.
+#
+# Runs as www-data for the same reason the worker does: anything it touches
+# inside storage/app/private must stay owned by the group PHP-FPM reads as.
+# Nothing here needs root.
+#
+# Install alongside keje-prune.timer:
+#   sudo cp deploy/systemd/keje-prune.* /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now keje-prune.timer
+#
+# Replace /var/www/keje with the deployment path.
+
+[Unit]
+Description=Keje — free media past its correction window
+After=network.target
+
+[Service]
+Type=oneshot
+User=www-data
+Group=www-data
+UMask=0002
+WorkingDirectory=/var/www/keje/apps/api
+ExecStart=/usr/bin/php /var/www/keje/apps/api/artisan media:prune-expired
+
+# Nothing is deleted without a confirmed Drive backup, so a failed run is not
+# an emergency — the next one picks up the same projects.
+Nice=10

@@ -23,6 +23,7 @@ class YouTubeService
 {
     public function __construct(
         private readonly GoogleClientFactory $clients,
+        private readonly YouTubeMetadataBuilder $metadata,
     ) {}
 
     /**
@@ -46,13 +47,20 @@ class YouTubeService
 
     /**
      * @param  callable(float):void|null  $onProgress  receives 0..1
-     * @return array{id:string, url:string, privacy_status:string, publish_at:?string}
+     * @param  ?string  $privacyOverride  forces the uploaded privacy regardless
+     *                                    of what the project intends. The
+     *                                    replacement workflow uploads private
+     *                                    unconditionally, so a corrected video
+     *                                    is never publicly visible alongside
+     *                                    the one it is about to replace.
+     * @return array{id:string, url:string, privacy_status:string, publish_at:?string, title:string}
      */
     public function upload(
         User $user,
         ContentProject $project,
         string $absolutePath,
         ?callable $onProgress = null,
+        ?string $privacyOverride = null,
     ): array {
         if (! is_file($absolutePath)) {
             throw new RuntimeException('The rendered video is no longer available to upload.');
@@ -60,36 +68,36 @@ class YouTubeService
 
         $this->assertExpectedChannel($user);
 
-        $metadata = (array) ($project->youtube_metadata ?? []);
-        $publishAt = filled($metadata['publish_at'] ?? null)
-            ? \Illuminate\Support\Carbon::parse($metadata['publish_at'])
-            : null;
+        // One shared derivation for upload, in-place update and replacement.
+        // Three separate ones would drift, and the drift would first show up
+        // as a correction quietly rewriting a title nobody touched.
+        $intent = $this->metadata->for($project, $privacyOverride);
+        $this->metadata->assertScheduleIsFuture($intent['publish_at']);
 
-        if ($publishAt !== null && $publishAt->isPast()) {
-            throw new RuntimeException('The scheduled publish time is in the past.');
-        }
+        // A replacement is uploaded private and scheduled later, once the old
+        // video is gone. Carrying the schedule into the upload would let
+        // YouTube publish it while the video it replaces is still up.
+        $publishAt = $privacyOverride === null ? $intent['publish_at'] : null;
 
         $client = $this->clients->forUser($user, GoogleService::YouTube);
         $youtube = new YouTube($client);
 
         $snippet = new VideoSnippet;
-        $snippet->setTitle($this->title($project, $metadata));
-        $snippet->setDescription((string) ($metadata['description'] ?? ''));
+        $snippet->setTitle($intent['title']);
+        $snippet->setDescription($intent['description']);
+        $snippet->setCategoryId($intent['category_id']);
 
-        if (filled($metadata['tags'] ?? null)) {
-            $snippet->setTags(array_values((array) $metadata['tags']));
+        if ($intent['tags'] !== []) {
+            $snippet->setTags($intent['tags']);
         }
 
-        $snippet->setCategoryId(
-            (string) ($metadata['category_id'] ?? config('services.youtube.default_category_id')),
-        );
+        if ($intent['default_language'] !== null) {
+            $snippet->setDefaultLanguage($intent['default_language']);
+        }
 
         $status = new VideoStatus;
-        // A scheduled video must be uploaded private; publishAt does the rest.
-        $status->setPrivacyStatus(
-            $publishAt !== null ? 'private' : (string) ($metadata['privacy_status'] ?? 'private'),
-        );
-        $status->setSelfDeclaredMadeForKids((bool) ($metadata['made_for_kids'] ?? false));
+        $status->setPrivacyStatus($intent['privacy_status']);
+        $status->setSelfDeclaredMadeForKids($intent['made_for_kids']);
 
         if ($publishAt !== null) {
             // YouTube requires RFC 3339 in UTC.
@@ -103,7 +111,7 @@ class YouTubeService
         $client->setDefer(true);
 
         $request = $youtube->videos->insert('snippet,status', $video, [
-            'notifySubscribers' => (bool) ($metadata['notify_subscribers'] ?? false),
+            'notifySubscribers' => $intent['notify_subscribers'],
         ]);
 
         $chunkSize = $this->chunkSize((int) config('services.youtube.chunk_size'));
@@ -153,6 +161,7 @@ class YouTubeService
             'url' => "https://www.youtube.com/watch?v={$videoId}",
             'privacy_status' => (string) $result->getStatus()?->getPrivacyStatus(),
             'publish_at' => $publishAt?->toIso8601String(),
+            'title' => $intent['title'],
         ];
     }
 
@@ -184,25 +193,6 @@ class YouTubeService
         $resource->setSnippet($snippet);
 
         return (string) $youtube->playlistItems->insert('snippet', $resource)->getId();
-    }
-
-    /** The YouTube title, falling back to the project's own naming. */
-    private function title(ContentProject $project, array $metadata): string
-    {
-        $title = trim((string) ($metadata['title'] ?? ''));
-
-        if ($title !== '') {
-            return mb_substr($title, 0, 100);
-        }
-
-        $parts = array_filter([
-            $project->primary_title,
-            $project->subtitle,
-            $project->topic?->name,
-            $project->part_number !== null ? "Part {$project->part_number}" : null,
-        ]);
-
-        return mb_substr(implode(' | ', $parts) ?: $project->working_title, 0, 100);
     }
 
     private function chunkSize(int $requested): int

@@ -611,6 +611,14 @@ POST   /content-projects/{uuid}/drive          202, queues the Drive backup
 POST   /content-projects/{uuid}/youtube        202, queues the YouTube upload
 POST   /content-projects/{uuid}/youtube/playlist  retry playlist membership only
 
+PATCH  /content-projects/{uuid}/youtube/metadata   edit the existing video in place (videos.update)
+GET    /content-projects/{uuid}/youtube/replacement       current correction + eligibility
+POST   /content-projects/{uuid}/youtube/replacement       202, starts a safe replacement
+POST   /content-projects/{uuid}/youtube/replacement/retry  202, resumes where it stopped
+POST   /content-projects/{uuid}/youtube/replacement/cancel 202, undoes it while that is possible
+GET    /content-projects/{uuid}/youtube/publications      every video this project has had
+POST   /content-projects/{uuid}/finalize        end the correction window, free the files
+
 GET    /integrations/google                    status of both connections
 POST   /integrations/youtube/redirect          YouTube consent URL
 DELETE /integrations/youtube                   disconnect YouTube only
@@ -733,6 +741,80 @@ project page forces an immediate check.
 The sync is read-only in both directions. It never sets privacy and never
 re-uploads: if a public video was made private, that is the truth to report,
 not a difference to correct.
+
+## Correcting a video that is already on YouTube
+
+Two mistakes, two different repairs, and confusing them is expensive.
+
+**YouTube cannot replace the video file behind an existing video ID.** There is no API for it and no button for it in YouTube Studio. Everything below follows from that one limitation.
+
+### Metadata-only mistakes
+
+Title, description, tags, category, language, privacy, schedule, thumbnail, playlist. YouTube edits every one of these in place.
+
+> Studio → project → edit the YouTube fields → **Update existing YouTube video**
+
+The video keeps its ID, its URL, its view count, its likes and every comment. Nothing is re-uploaded — the endpoint behind that button can reach `videos.update` and has no path to `videos.insert` at all.
+
+One subtlety worth knowing about, because getting it wrong is destructive in a quiet way: `videos.update` does not patch. Every part named in the request replaces what is on the video, so a snippet carrying only a description would blank the title and the category. Keje reads the video first and sends a complete resource built from the current remote values with your changes layered over them.
+
+### Rendered-content mistakes
+
+Wrong speaker, wrong TEMA number, wrong topic, wrong on-screen title or subtitle, wrong part number, wrong background, wrong audio, wrong cuts — anything encoded into the MP4.
+
+> Studio → project → correct it → **render again** → **Replace YouTube video**
+
+The Studio says *"The current render differs from the video on YouTube"* when this applies. It knows because each publication records the render fingerprint it came from; a timestamp could not answer this, since re-saving a project moves `updated_at` without changing a single frame.
+
+**The replacement gets a new YouTube URL.** Views, likes, comments and shares on the old video do not transfer. That is YouTube's constraint, not a choice Keje makes, and it is why replacement is a confirmed action rather than a button.
+
+### Why Keje does not delete first
+
+The obvious implementation is delete the old video, then upload the corrected one. It has a failure mode that destroys a lecture: if the upload then fails, there is nothing left and nothing brings the old video back.
+
+So the order is inverted:
+
+```
+upload the correction, privately
+        ↓   the old video is still up, still public, untouched
+confirm it exists on YouTube
+        ↓
+delete the old video  (or set it private)
+        ↓   only now does the new one become authoritative
+apply playlist, thumbnail, final visibility
+```
+
+The replacement stays **private** until the old video is disposed of, so two visible copies of the same lecture never coexist.
+
+Every arrow is a point where a worker can die, and every one of them is safe:
+
+| If this fails | What you have |
+|---|---|
+| the upload | Your published video, untouched. Nothing was deleted. Retry. |
+| deleting the old video | The correction, uploaded and private. Your published video is still live and unchanged. Retry the deletion only. |
+| the final settings | The corrected video is live and authoritative but still private. Retry the finalisation only. |
+
+### Retries never re-upload
+
+A retry resumes from what actually happened — does a new video id exist, has the old one been disposed of — rather than from a step counter. Re-running the upload is the one unrecoverable mistake available here, because it publishes a second real copy to a real channel, so the code path is incapable of it once a video id has been stored.
+
+Only one replacement can run per project, enforced by a unique column in the database rather than by a check in the application, so two servers cannot both start one. A **failed** replacement keeps that lock: it still owns a private video on the channel, and a second attempt on top of it would leave a third copy.
+
+### Cancelling
+
+Before the old video has been disposed of, cancelling deletes the temporary private copy and puts everything back. After it, there is nothing to go back to — the old video is gone — so the replacement can only be finished, not undone. The UI says which of the two you are in.
+
+### Keeping the old video
+
+The confirmation offers **Keep old video, set to private** as an alternative to deleting it. The comments and view count survive, invisible, and can be restored by hand from YouTube Studio. Useful when an old public video has discussion worth preserving.
+
+### Publication history
+
+Replacing changes the public URL, so every video a project has had stays on the record with what happened to it — replaced, deleted, or kept private. A link someone shared last week is the reason: the old ID is the only trace that it ever existed.
+
+### Permissions
+
+Editing and deleting videos need `youtube.force-ssl`, which uploading (`youtube.upload`) does not cover. A connection made before Keje requested that scope can publish perfectly well and cannot correct; the Studio says so and offers a reconnect rather than failing at the API. Drive permissions are untouched by any of this, and the two OAuth flows stay separate.
 
 ## Editing a project after it exists
 
@@ -1288,8 +1370,26 @@ The VPS is working space, not an archive — a lecture recording alone can be hu
 
 | Removed | When |
 |---|---|
-| `source/` (audio, artwork), `text/`, `temp/` | as soon as the Drive backup succeeds |
-| `renders/output.mp4` | once Drive **and** YouTube both hold a copy |
+| `source/` (audio, artwork), `text/`, `temp/` | once the Drive backup succeeds **and** the correction window has closed |
+| `renders/output.mp4` | once Drive **and** YouTube both hold a copy, and the correction window has closed |
+
+**The correction window.** Pruning used to run the moment YouTube confirmed the upload — which is precisely when the video becomes visible and its mistakes become findable. Someone who spotted a wrong speaker name the next morning had to find the original recording again, if they still had it.
+
+The working files now survive `MEDIA_CORRECTION_WINDOW_DAYS` (default 14) after publication, so **correct → re-render → replace** works without the original MP3. Two things end the window:
+
+- **Finalise project** on the project page — the usual path, and the honest one: the person who has just watched the video knows whether it is right far better than a clock does.
+- The window elapsing.
+
+Because pruning is otherwise opportunistic — it happens when a backup or upload finishes, and a project retained at that moment is never revisited — a sweeper collects whatever is left:
+
+```bash
+php artisan media:prune-expired --dry-run   # what would go
+php artisan media:prune-expired             # do it
+```
+
+This is optional, not a requirement: Finalise frees a project immediately. `deploy/systemd/keje-prune.timer` automates it for hosts that want it. Set `MEDIA_CORRECTION_WINDOW_DAYS=0` to restore the previous prune-on-publish behaviour.
+
+A replacement in flight always retains the render it is uploading, whatever the window says.
 
 The MP4 is held back for YouTube because that upload reads the same local file; set `MEDIA_RETAIN_OUTPUT_FOR_YOUTUBE=false` if Drive is your only destination.
 

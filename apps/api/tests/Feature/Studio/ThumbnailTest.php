@@ -257,6 +257,11 @@ class ThumbnailTest extends TestCase
         $this->postJson("/api/v1/content-projects/{$project->uuid}/thumbnail/frames")->assertOk();
         $this->postJson("/api/v1/content-projects/{$project->uuid}/thumbnail/select", ['timestamp' => 300]);
 
+        // The point here is that the thumbnail survives a prune, so the prune
+        // has to actually happen: the correction window would otherwise keep
+        // everything and the assertion would pass for the wrong reason.
+        config(['media.retention.correction_window_days' => 0]);
+
         app(\App\Services\Media\MediaRetention::class)->prune($project->refresh());
 
         Storage::disk('local')->assertMissing($project->source_audio_path);

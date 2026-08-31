@@ -67,6 +67,15 @@ enum GoogleService: string
                 'read_channel' => $has(self::SCOPE_YOUTUBE_READONLY, self::SCOPE_YOUTUBE_FORCE_SSL),
                 'upload_video' => $has(self::SCOPE_YOUTUBE_UPLOAD),
                 'manage_playlists' => $has(self::SCOPE_YOUTUBE_FORCE_SSL),
+
+                // videos.update and videos.delete are writes against a video
+                // that already exists, which .upload does not cover: that
+                // scope authorises creating videos, not editing or removing
+                // them. A connection made before force-ssl was requested can
+                // still upload perfectly well and simply cannot correct or
+                // replace — which is why this is reported per capability
+                // rather than as a broken integration.
+                'manage_videos' => $has(self::SCOPE_YOUTUBE_FORCE_SSL),
             ],
             self::Drive => [
                 // drive.file covers both: Keje only ever sees what it created.

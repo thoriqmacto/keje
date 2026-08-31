@@ -238,6 +238,28 @@ return [
          * also holds a copy. Turn it off if Drive is the only destination.
          */
         'retain_output_for_youtube' => (bool) env('MEDIA_RETAIN_OUTPUT_FOR_YOUTUBE', true),
+
+        /*
+         * How long after publishing a correction stays possible.
+         *
+         * Pruning the moment YouTube confirmed the upload was too eager: it
+         * freed disk at exactly the moment the video became visible and
+         * mistakes became findable. A wrong speaker name spotted the next
+         * morning meant re-uploading the original recording from wherever the
+         * user still had it, if they still had it.
+         *
+         * During this window the rendered MP4 survives, so "correct, re-render,
+         * replace" works without touching the source audio. Set to 0 to keep
+         * the previous behaviour and prune immediately.
+         *
+         * Nothing here requires a scheduler. The window is checked whenever a
+         * prune is attempted, and the explicit "Finalise project" action ends
+         * it on demand — which is the path most projects will take, because
+         * the person who just watched the video knows whether it is right.
+         * `php artisan media:prune-expired` sweeps anything left behind; see
+         * deploy/systemd for an optional timer.
+         */
+        'correction_window_days' => (int) env('MEDIA_CORRECTION_WINDOW_DAYS', 14),
     ],
 
     'stream_link_ttl_minutes' => (int) env('MEDIA_STREAM_LINK_TTL_MINUTES', 30),

@@ -4,8 +4,25 @@ import Link from "next/link";
 import useSWR from "swr";
 import { Button } from "@/components/ui/button";
 import { ProjectStatusBadge } from "@/components/studio/status-badge";
+import {
+    youtubeBadgeLabel,
+    youtubeBadgeStatus,
+    type YouTubeBadgeInput,
+} from "@/lib/studio/youtube-badge";
 import { listProjects, studioKeys } from "@/lib/studio/api";
 import { formatDateTime, formatDuration } from "@/lib/studio/format";
+import type { ContentProjectSummary } from "@/lib/types/studio";
+
+/** The badge's inputs, gathered in one place so the two calls agree. */
+function badgeInput(project: ContentProjectSummary): YouTubeBadgeInput {
+    return {
+        label: project.youtube.label,
+        remoteLabel: project.youtube.remote_label,
+        isReplacing: project.youtube.is_replacing,
+        replacementFailed: project.youtube.replacement_failed,
+        hasVideo: project.youtube.status !== "pending",
+    };
+}
 
 export default function StudioListClient() {
     const { data: projects, isLoading } = useSWR(studioKeys.projects, listProjects, {
@@ -113,15 +130,17 @@ export default function StudioListClient() {
                                         <div className="flex flex-col gap-1">
                                             <ProjectStatusBadge
                                                 pipeline="youtube"
-                                                status={project.youtube.status}
-                                                // What YouTube says now wins:
-                                                // a scheduled video publishes
-                                                // itself, and the pipeline
-                                                // value was frozen at upload.
-                                                label={
-                                                    project.youtube.remote_label
-                                                    ?? project.youtube.label
-                                                }
+                                                // A replacement mid-flight is
+                                                // the most relevant thing to
+                                                // say; otherwise what YouTube
+                                                // says now wins, because the
+                                                // pipeline value was frozen at
+                                                // upload.
+                                                status={youtubeBadgeStatus(
+                                                    badgeInput(project),
+                                                    project.youtube.status,
+                                                )}
+                                                label={youtubeBadgeLabel(badgeInput(project))}
                                             />
                                             {project.youtube.scheduled_at && (
                                                 <span className="text-[11px] text-muted-foreground">

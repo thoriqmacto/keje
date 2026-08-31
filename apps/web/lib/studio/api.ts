@@ -6,13 +6,17 @@ import type {
     ContentTopic,
     DriveAbout,
     DriveBackupFile,
+    OldVideoDisposition,
     RenderStatusPayload,
     Speaker,
     TemplateLayout,
     YouTubeChannelProfile,
     YouTubeLanguage,
+    YouTubeMetadata,
     YouTubePlaylist,
+    YouTubePublication,
     YouTubeRecentUpload,
+    YouTubeReplacement,
     YouTubeVideoCategory,
 } from "@/lib/types/studio";
 
@@ -33,6 +37,8 @@ export const studioKeys = {
     topic: (id: string) => `studio:topic:${id}`,
     speakers: "studio:speakers",
     google: "studio:google",
+    replacement: (id: string) => `studio:replacement:${id}`,
+    publications: (id: string) => `studio:publications:${id}`,
 } as const;
 
 // ── Topics ──────────────────────────────────────────────────────────────────
@@ -403,6 +409,95 @@ export async function syncYouTubeStatus(projectId: string): Promise<ContentProje
 export async function assignYouTubePlaylist(projectId: string): Promise<ContentProject> {
     const { data } = await api.post<{ data: ContentProject }>(
         `/content-projects/${projectId}/youtube/playlist`,
+    );
+    return data.data;
+}
+
+// ── Correcting a published video ────────────────────────────────────────────
+//
+// Two operations, kept apart in the client exactly as they are on the server.
+// A single `reupload()` helper would be one careless call site away from
+// deleting a published lecture to fix a typo.
+
+/**
+ * Edit the metadata of the video already on YouTube.
+ *
+ * Same video id, same URL, same comments. Cannot upload.
+ */
+export async function updateYouTubeMetadata(
+    projectId: string,
+    metadata: Partial<YouTubeMetadata>,
+): Promise<ContentProject> {
+    const { data } = await api.patch<{ data: ContentProject }>(
+        `/content-projects/${projectId}/youtube/metadata`,
+        metadata,
+    );
+    return data.data;
+}
+
+/**
+ * Replace the video file, which YouTube can only do by publishing a new video.
+ *
+ * The new video gets a new URL, and the old one's views, likes and comments do
+ * not move with it. Destructive when the disposition is `delete`.
+ */
+export async function startYouTubeReplacement(
+    projectId: string,
+    oldDisposition: OldVideoDisposition,
+): Promise<YouTubeReplacement> {
+    const { data } = await api.post<{ data: YouTubeReplacement }>(
+        `/content-projects/${projectId}/youtube/replacement`,
+        { old_disposition: oldDisposition },
+    );
+    return data.data;
+}
+
+export async function getYouTubeReplacement(
+    projectId: string,
+): Promise<YouTubeReplacement | null> {
+    const { data } = await api.get<{ data: YouTubeReplacement | null }>(
+        `/content-projects/${projectId}/youtube/replacement`,
+    );
+    return data.data;
+}
+
+/** Resume a stalled replacement. Never re-uploads — the server resumes. */
+export async function retryYouTubeReplacement(
+    projectId: string,
+): Promise<YouTubeReplacement> {
+    const { data } = await api.post<{ data: YouTubeReplacement }>(
+        `/content-projects/${projectId}/youtube/replacement/retry`,
+    );
+    return data.data;
+}
+
+export async function cancelYouTubeReplacement(
+    projectId: string,
+): Promise<YouTubeReplacement> {
+    const { data } = await api.post<{ data: YouTubeReplacement }>(
+        `/content-projects/${projectId}/youtube/replacement/cancel`,
+    );
+    return data.data;
+}
+
+export async function listYouTubePublications(
+    projectId: string,
+): Promise<YouTubePublication[]> {
+    const { data } = await api.get<{ data: YouTubePublication[] }>(
+        `/content-projects/${projectId}/youtube/publications`,
+    );
+    return data.data;
+}
+
+/**
+ * Declare the project finished, releasing the files kept for corrections.
+ *
+ * The counterpart to the correction window: after this the project cannot be
+ * re-rendered, so it is deliberately a decision rather than a timer.
+ */
+export async function finalizeProject(projectId: string): Promise<ContentProject> {
+    const { data } = await api.post<{ data: ContentProject }>(
+        `/content-projects/${projectId}/finalize`,
     );
     return data.data;
 }

@@ -120,6 +120,16 @@ class YouTubeVideoSyncService
     private function apply(ContentProject $project, ?array $video): void
     {
         if ($video === null) {
+            // Asked for and not returned. Usually that means the video was
+            // deleted from under us — but if Keje deleted it itself during a
+            // replacement, this is the expected outcome of a step that
+            // succeeded, and reporting "Unavailable" against the project's
+            // *current* video would be doubly wrong: the current video is the
+            // replacement, and it is fine.
+            if ($this->wasReplacedByKeje($project)) {
+                return;
+            }
+
             $project->forceFill([
                 'youtube_remote_status' => YouTubeRemoteStatus::Unavailable->value,
                 'youtube_remote_synced_at' => now(),
@@ -170,6 +180,23 @@ class YouTubeVideoSyncService
             YouTubeRemoteStatus::Scheduled => YouTubeStatus::Scheduled,
             default => $project->youtube_status,
         };
+    }
+
+    /**
+     * The id we just failed to find is one Keje deliberately removed.
+     *
+     * Happens when a sync was queued against the old video before a
+     * replacement ran and arrives after it. The publication history is what
+     * distinguishes "we deleted this on purpose" from "this disappeared",
+     * which is the difference between silence and an alarming warning on a
+     * project that is working perfectly.
+     */
+    private function wasReplacedByKeje(ContentProject $project): bool
+    {
+        return $project->youtubePublications()
+            ->where('youtube_video_id', $project->youtube_video_id)
+            ->whereNotNull('remote_deleted_at')
+            ->exists();
     }
 
     /** @param Collection<int, ContentProject> $projects */

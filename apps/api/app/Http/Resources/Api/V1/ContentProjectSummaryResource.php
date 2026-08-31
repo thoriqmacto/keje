@@ -67,10 +67,51 @@ class ContentProjectSummaryResource extends JsonResource
                     ? null
                     : \App\Enums\YouTubeRemoteStatus::from($this->youtube_remote_status)->label(),
                 'remote_synced_at' => $this->youtube_remote_synced_at?->toIso8601String(),
+
+                /*
+                 * A correction in flight, so the list can say "Replacing…"
+                 * rather than something alarming and untrue.
+                 *
+                 * The distinction that matters here is `replacement_failed`
+                 * with the video still published: the workflow broke, but the
+                 * lecture is up and unchanged. Showing that as "Failed" would
+                 * send someone to check a video that is perfectly fine.
+                 */
+                'is_replacing' => $this->replacementState()['active'],
+                'replacement_failed' => $this->replacementState()['failed'],
             ],
 
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
         ];
+    }
+
+    /** @var array{active: bool, failed: bool}|null */
+    private ?array $replacementState = null;
+
+    /**
+     * Replacement state for the list, in one query per project.
+     *
+     * Memoised on the instance because the two fields above would otherwise
+     * each hit the database, doubling the query count of a page that lists
+     * every project. Instance-scoped rather than static: a resource is created
+     * per item, so this is naturally per-project, and a static would outlive
+     * the request under a persistent worker and start answering for the wrong
+     * one.
+     *
+     * @return array{active: bool, failed: bool}
+     */
+    private function replacementState(): array
+    {
+        if ($this->replacementState === null) {
+            $replacement = $this->activeYouTubeReplacement();
+
+            $this->replacementState = [
+                'active' => $replacement !== null,
+                'failed' => $replacement?->status === \App\Enums\ReplacementStatus::Failed,
+            ];
+        }
+
+        return $this->replacementState;
     }
 }
