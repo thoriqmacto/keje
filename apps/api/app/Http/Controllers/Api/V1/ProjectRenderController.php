@@ -10,6 +10,7 @@ use App\Http\Resources\Api\V1\ContentProjectResource;
 use App\Jobs\RenderContentProjectJob;
 use App\Models\ContentProject;
 use App\Models\RenderJob;
+use App\Services\Media\RenderQueueHealth;
 use App\Services\Media\VideoRenderer;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -30,6 +31,7 @@ class ProjectRenderController extends Controller
 {
     public function __construct(
         private readonly VideoRenderer $renderer,
+        private readonly RenderQueueHealth $queueHealth,
     ) {}
 
     /**
@@ -105,12 +107,18 @@ class ProjectRenderController extends Controller
 
         $latest = $project->latestRenderJob();
 
+        // A render nobody picked up is indistinguishable from one about to
+        // start — both are "queued" at 0%. Say which it is.
+        $stalled = $this->queueHealth->stallReason($latest);
+
         return response()->json([
             'data' => [
                 'status' => $project->render_status->value,
                 'label' => $project->render_status->label(),
                 'progress' => $latest?->progress_percent ?? 0,
                 'error' => $project->render_error,
+                'stalled' => $stalled !== null,
+                'stalled_reason' => $stalled,
                 'has_output' => filled($project->output_path),
                 'rendered_at' => $project->rendered_at?->toIso8601String(),
                 'attempt' => [

@@ -192,6 +192,68 @@ class RenderTest extends TestCase
             ->assertJsonPath('data.progress', 43);
     }
 
+    #[Test]
+    public function a_render_nobody_picks_up_is_reported_rather_than_left_at_zero(): void
+    {
+        // The suite runs on the sync driver, which would execute the render
+        // in the request. Production uses the database driver, and this test
+        // is about what that driver does when nothing drains it.
+        config(['queue.default' => 'database']);
+
+        Sanctum::actingAs($user = User::factory()->create());
+        $project = $this->renderableProject($user);
+
+        // Queue the render for real — the row lands in the jobs table and
+        // stays there, exactly as it does when no worker is listening to the
+        // "media" queue.
+        $this->postJson("/api/v1/content-projects/{$project->uuid}/render")->assertStatus(202);
+
+        $this->assertDatabaseHas('jobs', ['queue' => 'media']);
+
+        // Still queued a moment later: normal, and reported as such.
+        $this->getJson("/api/v1/content-projects/{$project->uuid}/render-status")
+            ->assertOk()
+            ->assertJsonPath('data.progress', 0)
+            ->assertJsonPath('data.stalled', false);
+
+        $this->travel(20)->minutes();
+
+        $response = $this->getJson("/api/v1/content-projects/{$project->uuid}/render-status")
+            ->assertOk()
+            ->assertJsonPath('data.status', 'queued')
+            ->assertJsonPath('data.progress', 0)
+            ->assertJsonPath('data.stalled', true);
+
+        // The message has to name the actual cause; "still queued" is what
+        // the progress bar already said.
+        $this->assertStringContainsString('queue:work', $response->json('data.stalled_reason'));
+        $this->assertStringContainsString('media', $response->json('data.stalled_reason'));
+
+        // The attempt is still queued, not failed: it will run the moment a
+        // worker appears, and marking it failed would throw the work away.
+        $this->assertSame(RenderJobStatus::Queued, $project->latestRenderJob()->status);
+    }
+
+    #[Test]
+    public function a_running_render_is_never_reported_as_stalled(): void
+    {
+        Sanctum::actingAs($user = User::factory()->create());
+        $project = $this->renderableProject($user);
+        $project->forceFill(['render_status' => RenderStatus::Rendering])->save();
+
+        // A long render is not a stalled one — a lecture takes real minutes.
+        $job = $project->renderJobs()->create([
+            'status' => RenderJobStatus::Running,
+            'progress_percent' => 12,
+        ]);
+        $job->forceFill(['created_at' => now()->subHour()])->save();
+
+        $this->getJson("/api/v1/content-projects/{$project->uuid}/render-status")
+            ->assertOk()
+            ->assertJsonPath('data.stalled', false)
+            ->assertJsonPath('data.stalled_reason', null);
+    }
+
     // ── Job state machine ───────────────────────────────────────────────────
 
     #[Test]

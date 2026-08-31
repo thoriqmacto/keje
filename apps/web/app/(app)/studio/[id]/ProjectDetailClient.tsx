@@ -249,6 +249,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                             <RenderProgress
                                 status={renderStatus}
                                 progress={render.data?.progress ?? 0}
+                                stalledReason={render.data?.stalled_reason ?? null}
                             />
 
                             {project.render.error && (

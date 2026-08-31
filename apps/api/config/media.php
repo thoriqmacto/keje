@@ -163,6 +163,22 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Queue health
+    |--------------------------------------------------------------------------
+    |
+    | How long a render may sit queued before the studio stops showing a bare
+    | progress bar and explains the wait instead. Long enough that a worker
+    | finishing the previous render is not reported as a problem; short enough
+    | that a missing worker is noticed in the same sitting.
+    |
+    */
+
+    'queue' => [
+        'stall_after_seconds' => (int) env('MEDIA_QUEUE_STALL_SECONDS', 120),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Playback links
     |--------------------------------------------------------------------------
     |

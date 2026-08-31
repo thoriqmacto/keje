@@ -178,6 +178,9 @@ export type RenderStatusPayload = {
     label: string;
     progress: number;
     error: string | null;
+    /** Queued far longer than a worker should take — see stalled_reason. */
+    stalled: boolean;
+    stalled_reason: string | null;
     has_output: boolean;
     rendered_at: string | null;
     attempt: {
