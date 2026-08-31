@@ -289,6 +289,11 @@ class PostRenderActionsTest extends TestCase
 
         Storage::disk('local')->put($project->output_path, 'mp4');
 
+        // This case is about the Drive/YouTube handoff, so the correction
+        // window is taken out of the picture; it is what would otherwise
+        // retain the file, and it has its own tests.
+        config(['media.retention.correction_window_days' => 0]);
+
         $freed = app(MediaRetention::class)->prune($project->refresh());
 
         $this->assertTrue($freed['sources']);

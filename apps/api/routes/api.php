@@ -10,6 +10,8 @@ use App\Http\Controllers\Api\V1\ProjectMediaController;
 use App\Http\Controllers\Api\V1\ProjectPublicationController;
 use App\Http\Controllers\Api\V1\ProjectRenderController;
 use App\Http\Controllers\Api\V1\ProjectThumbnailController;
+use App\Http\Controllers\Api\V1\ProjectYouTubeMetadataController;
+use App\Http\Controllers\Api\V1\ProjectYouTubeReplacementController;
 use App\Http\Controllers\Api\V1\SpeakerController;
 use App\Http\Controllers\Api\V1\YouTubeCatalogController;
 use Illuminate\Support\Facades\Route;
@@ -129,6 +131,35 @@ Route::prefix('v1')->group(function () {
             // Read-only refresh of the remote video state. Never writes to
             // YouTube; never re-uploads.
             Route::post('/youtube/sync', [ProjectPublicationController::class, 'syncYouTube']);
+
+            /*
+             * Correcting a video that is already on YouTube. Two endpoints
+             * because they are two different operations with two different
+             * consequences, and collapsing them behind one "re-upload" button
+             * is how someone deletes a published lecture by accident.
+             *
+             * metadata  → videos.update on the same id. The URL, the views and
+             *             the comments all survive. Cannot reach videos.insert.
+             * replacement → a new video and a new URL, because YouTube cannot
+             *             swap the file behind an existing id. Destructive, and
+             *             gated accordingly.
+             */
+            Route::patch('/youtube/metadata', [ProjectYouTubeMetadataController::class, 'update']);
+
+            Route::get('/youtube/replacement', [ProjectYouTubeReplacementController::class, 'show']);
+            Route::post('/youtube/replacement', [ProjectYouTubeReplacementController::class, 'store']);
+            // Resumes from persisted state; structurally cannot re-upload.
+            Route::post('/youtube/replacement/retry', [ProjectYouTubeReplacementController::class, 'retry']);
+            Route::post('/youtube/replacement/cancel', [ProjectYouTubeReplacementController::class, 'cancel']);
+
+            // Publication history: every video this project has had, and what
+            // happened to each. Replacing changes the public URL, so the old
+            // ones stay on the record.
+            Route::get('/youtube/publications', [ProjectPublicationController::class, 'history']);
+
+            // "I am done correcting this" — releases the working files that
+            // were being kept so a correction stayed possible.
+            Route::post('/finalize', [ProjectPublicationController::class, 'finalize']);
 
             // Choosing a frame as the YouTube thumbnail. Kept apart from the
             // upload endpoints so a thumbnail retry can never reach

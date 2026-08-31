@@ -126,6 +126,12 @@ class ContentProjectResource extends JsonResource
                 // What Google says now, kept apart from our own pipeline status:
                 // "our upload failed" and "the video is private" are different
                 // facts and must not collapse into one value.
+                // Which render this video was made from, and whether that is
+                // still the current one. The distinction between "edit the
+                // description" and "replace the video" rests entirely here.
+                'render_input_hash' => $this->youtube_render_input_hash,
+                'video_is_outdated' => $this->youtubeVideoIsOutdated(),
+
                 'remote' => [
                     'status' => $this->youtube_remote_status,
                     'label' => $this->youtube_remote_status === null
@@ -149,10 +155,51 @@ class ContentProjectResource extends JsonResource
                 'youtube_synced_at' => $this->youtube_thumbnail_synced_at?->toIso8601String(),
             ],
 
+            // Whether a correction is possible, and if not, the sentence
+            // saying why. Sent with the project so the UI never offers a
+            // button the API would refuse.
+            'replacement' => $this->replacementBlock(),
+
+            // The working files are kept for a while after publishing so a
+            // mistake can still be corrected; this is what says so, and how
+            // the user releases them early.
+            'retention' => [
+                'finalized_at' => $this->finalized_at?->toIso8601String(),
+                'within_correction_window' => app(\App\Services\Media\MediaRetention::class)
+                    ->withinCorrectionWindow($this->resource),
+            ],
+
             'render_settings' => $this->render_settings,
 
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
+        ];
+    }
+
+    /**
+     * Correction state: what is running, and what may be started.
+     *
+     * Eligibility travels with the project rather than sitting behind its own
+     * endpoint so the studio cannot draw an enabled "Replace video" button for
+     * a project the API would refuse — the two would drift the first time a
+     * precondition changed.
+     *
+     * @return array<string, mixed>
+     */
+    private function replacementBlock(): array
+    {
+        $active = $this->activeYouTubeReplacement();
+        $eligibility = app(\App\Services\Google\YouTubeReplacementPolicy::class)
+            ->evaluate($this->resource);
+
+        return [
+            'active' => $active === null ? null : (new YouTubeReplacementResource($active))->resolve(),
+            'can_replace' => $active === null && $eligibility['allowed'],
+            'blocked_reason' => $eligibility['reason'],
+            'blocked_message' => $eligibility['message'],
+            'needs_render' => $eligibility['needs_render'],
+            'needs_reconnect' => $eligibility['needs_reconnect'],
+            'needs_media' => $eligibility['needs_media'],
         ];
     }
 }

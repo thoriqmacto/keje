@@ -6,6 +6,7 @@ use App\Enums\YouTubeStatus;
 use App\Models\ContentProject;
 use App\Services\Google\GoogleNotConnectedException;
 use App\Services\Google\YouTubePlaylistAssigner;
+use App\Services\Google\YouTubePublicationRecorder;
 use App\Services\Google\YouTubeService;
 use App\Services\Google\YouTubeThumbnailService;
 use App\Services\Media\MediaRetention;
@@ -88,6 +89,13 @@ class UploadVideoToYouTubeJob implements ShouldQueue
                 'youtube_publish_at' => $result['publish_at'],
                 'youtube_error' => null,
             ])->save();
+
+            // History, and the render identity behind it. Recorded here rather
+            // than left to the caller because this is the only place that
+            // knows the upload succeeded, and a publication row written later
+            // could not honestly say which render produced the file.
+            app(YouTubePublicationRecorder::class)
+                ->recordFirstPublication($project->refresh(), $result);
 
             // A chosen thumbnail goes up after the video, never with it. A
             // failure here must not touch the video: it exists, and anything

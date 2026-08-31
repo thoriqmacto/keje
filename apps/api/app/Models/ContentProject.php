@@ -74,6 +74,7 @@ class ContentProject extends Model
             'drive_uploaded_at' => 'datetime',
             'youtube_uploaded_at' => 'datetime',
             'youtube_publish_at' => 'datetime',
+            'finalized_at' => 'datetime',
         ];
     }
 
@@ -100,6 +101,60 @@ class ContentProject extends Model
     public function latestRenderJob(): ?RenderJob
     {
         return $this->renderJobs()->latest('id')->first();
+    }
+
+    /** Every video this project has had on YouTube, oldest first. */
+    public function youtubePublications(): HasMany
+    {
+        return $this->hasMany(YouTubePublication::class);
+    }
+
+    public function youtubeReplacements(): HasMany
+    {
+        return $this->hasMany(YouTubeReplacement::class);
+    }
+
+    /**
+     * The correction currently in flight, if any.
+     *
+     * Only one can exist — the database enforces it through a unique
+     * active_key — so this is a single row rather than a "latest of many".
+     */
+    public function activeYouTubeReplacement(): ?YouTubeReplacement
+    {
+        return $this->youtubeReplacements()->whereNotNull('active_key')->first();
+    }
+
+    /** The publication representing this project on YouTube right now. */
+    public function currentYouTubePublication(): ?YouTubePublication
+    {
+        if ($this->current_youtube_publication_id === null) {
+            return null;
+        }
+
+        return YouTubePublication::find($this->current_youtube_publication_id);
+    }
+
+    /**
+     * The video on YouTube was made from an older render.
+     *
+     * The precise question behind "do I need to replace this video, or just
+     * edit its description". Answered from render fingerprints, never from
+     * timestamps: re-saving a project moves updated_at without changing a
+     * single frame, and a title typo fixed in the YouTube metadata changes
+     * updated_at without changing the video at all.
+     *
+     * Unknown when the video predates fingerprinting — reporting every
+     * historical upload as outdated on the day this ships would be noise.
+     */
+    public function youtubeVideoIsOutdated(): bool
+    {
+        if (blank($this->youtube_video_id) || blank($this->youtube_render_input_hash)) {
+            return false;
+        }
+
+        return $this->youtube_render_input_hash
+            !== app(\App\Services\Media\RenderInputFingerprint::class)->for($this);
     }
 
     /**

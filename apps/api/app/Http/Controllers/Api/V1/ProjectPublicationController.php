@@ -8,11 +8,14 @@ use App\Enums\YouTubeStatus;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\V1\UploadToYouTubeRequest;
 use App\Http\Resources\Api\V1\ContentProjectResource;
+use App\Http\Resources\Api\V1\YouTubePublicationResource;
 use App\Jobs\UploadVideoToGoogleDriveJob;
 use App\Jobs\UploadVideoToYouTubeJob;
 use App\Models\ContentProject;
 use App\Services\Google\GoogleClientFactory;
 use App\Services\Google\YouTubePlaylistAssigner;
+use App\Services\Google\YouTubePublicationRecorder;
+use App\Services\Google\YouTubeReplacementService;
 use App\Services\Google\YouTubeVideoSyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
@@ -75,6 +78,16 @@ class ProjectPublicationController extends Controller
 
         $this->assertConnected(GoogleService::YouTube);
         $this->assertRendered($project);
+
+        // A replacement owns this project's YouTube state and is about to
+        // change youtube_video_id. Two writers on that column is how a
+        // replacement ends up pointing at the video it was replacing.
+        if (app(YouTubeReplacementService::class)->isBlockedByReplacement($project)) {
+            return response()->json([
+                'message' => 'A replacement is in progress for this project. Finish or cancel it first.',
+                'data' => new ContentProjectResource($project->fresh(['topic', 'speaker'])),
+            ], 409);
+        }
 
         // Uploading twice would create a second real video on the channel.
         if ($project->youtube_status->hasVideo() && filled($project->youtube_video_id)) {
@@ -200,6 +213,61 @@ class ProjectPublicationController extends Controller
                 'render' => ['Render the video before publishing it.'],
             ]);
         }
+    }
+
+    /**
+     * Every video this project has had on YouTube, newest first.
+     *
+     * Replacing a video changes its public URL, so the superseded ids are not
+     * noise to be tidied away — they are the only record of a link that may
+     * still be circulating.
+     */
+    public function history(Request $request, ContentProject $project): JsonResponse
+    {
+        abort_unless($request->user()->can('update', $project), 404);
+
+        // A project published before history existed has no rows yet. Writing
+        // one on read keeps the list honest rather than showing nothing for a
+        // video that plainly exists.
+        app(YouTubePublicationRecorder::class)->backfillCurrent($project);
+
+        return response()->json([
+            'data' => YouTubePublicationResource::collection(
+                $project->youtubePublications()->orderByDesc('id')->get(),
+            ),
+        ]);
+    }
+
+    /**
+     * Declare the project finished, and release the files kept for corrections.
+     *
+     * The counterpart to the correction window: publishing no longer destroys
+     * the ability to fix a mistake, so something has to say when that ability
+     * is no longer wanted. An explicit action is better than a timer for the
+     * common case — the person who just checked the video knows whether it is
+     * right far better than a clock does.
+     */
+    public function finalize(Request $request, ContentProject $project): JsonResponse
+    {
+        abort_unless($request->user()->can('update', $project), 404);
+
+        if (app(YouTubeReplacementService::class)->isBlockedByReplacement($project)) {
+            return response()->json([
+                'message' => 'A replacement is in progress. Finish or cancel it before finalising.',
+                'data' => new ContentProjectResource($project->fresh(['topic', 'speaker'])),
+            ], 409);
+        }
+
+        $project->forceFill(['finalized_at' => now()])->save();
+
+        $freed = app(\App\Services\Media\MediaRetention::class)->prune($project->refresh());
+
+        return response()->json([
+            'message' => $freed['bytes'] > 0
+                ? 'Project finalised. The local working files have been removed.'
+                : 'Project finalised.',
+            'data' => new ContentProjectResource($project->fresh(['topic', 'speaker'])),
+        ]);
     }
 
     /**
