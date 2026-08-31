@@ -44,6 +44,7 @@ class MediaDiagnoseCommand extends Command
         $this->checkFonts();
         $this->checkTemplates($templates);
         $this->checkStorage();
+        $this->checkUploadLimits();
         $this->checkRuntimeWritability();
         $this->checkQueue();
         $this->checkGoogle($clients);
@@ -152,6 +153,63 @@ class MediaDiagnoseCommand extends Command
                 ? $this->caution('Disk space', $message.' — low')
                 : $this->good('Disk space', $message);
         }
+    }
+
+    /**
+     * PHP's own ceilings on an upload, against what Keje advertises.
+     *
+     * A recording larger than upload_max_filesize but smaller than
+     * post_max_size is dropped by PHP before Laravel sees it, and the request
+     * comes back 422 as if the file were bad. That is invisible until someone
+     * uploads a real lecture, so check it at deploy time instead.
+     */
+    private function checkUploadLimits(): void
+    {
+        $needed = (int) config('media.max_audio_mb');
+
+        $limits = [
+            'upload_max_filesize' => $this->bytes((string) ini_get('upload_max_filesize')),
+            'post_max_size' => $this->bytes((string) ini_get('post_max_size')),
+        ];
+
+        foreach ($limits as $key => $bytes) {
+            $shown = ini_get($key) ?: 'unset';
+
+            // post_max_size = 0 means unlimited; upload_max_filesize = 0 does
+            // not, it refuses every upload.
+            if ($key === 'post_max_size' && $bytes === 0) {
+                $this->good("PHP {$key}", 'unlimited');
+
+                continue;
+            }
+
+            $bytes >= $needed * 1024 * 1024
+                ? $this->good("PHP {$key}", $shown)
+                : $this->bad("PHP {$key}", "{$shown} — smaller than MEDIA_MAX_AUDIO_MB ({$needed}M); uploads that size will be rejected as invalid");
+        }
+
+        // Nginx enforces its own ceiling and PHP cannot see it, so this is a
+        // reminder rather than a check.
+        $this->line("  <fg=gray>Nginx client_max_body_size must also be at least {$needed}M — not visible from PHP.</>");
+    }
+
+    /** Parse a PHP shorthand size ("512M", "8G") into bytes. */
+    private function bytes(string $value): int
+    {
+        $value = trim($value);
+
+        if ($value === '') {
+            return 0;
+        }
+
+        $number = (int) $value;
+
+        return match (strtolower(substr($value, -1))) {
+            'g' => $number * 1024 ** 3,
+            'm' => $number * 1024 ** 2,
+            'k' => $number * 1024,
+            default => $number,
+        };
     }
 
     /**

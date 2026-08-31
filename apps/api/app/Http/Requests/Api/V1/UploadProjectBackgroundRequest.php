@@ -24,6 +24,7 @@ class UploadProjectBackgroundRequest extends FormRequest
     {
         return [
             'background.max' => 'The background may not be larger than '.config('media.max_image_mb').' MB.',
+            'background.uploaded' => UploadLimits::message('background', (int) config('media.max_image_mb')),
             'background.extensions' => 'Upload a JPG, PNG or WebP image.',
         ];
     }

@@ -27,6 +27,7 @@ class UploadProjectAudioRequest extends FormRequest
     {
         return [
             'audio.max' => 'The recording may not be larger than '.config('media.max_audio_mb').' MB.',
+            'audio.uploaded' => UploadLimits::message('recording', (int) config('media.max_audio_mb')),
             'audio.extensions' => 'Upload one of: '
                 .implode(', ', (array) config('media.audio_extensions')).'.',
         ];

@@ -2,6 +2,7 @@
 
 namespace App\Services\Media;
 
+use App\Exceptions\Media\MediaToolUnavailableException;
 use App\Exceptions\Media\UnusableMediaException;
 use Symfony\Component\Process\Exception\ProcessFailedException;
 use Symfony\Component\Process\Process;
@@ -49,9 +50,17 @@ class FfprobeService
      * @return array<string, mixed>
      *
      * @throws UnusableMediaException
+     * @throws MediaToolUnavailableException
      */
     public function inspect(string $path): array
     {
+        // Checked before the file is blamed: without ffprobe every upload
+        // looks corrupt, and reporting that as a validation error sends
+        // people off to re-encode a recording that was never the problem.
+        if (! $this->isAvailable()) {
+            throw MediaToolUnavailableException::at($this->binary);
+        }
+
         if (! is_file($path)) {
             throw new UnusableMediaException('The uploaded file could not be read.');
         }

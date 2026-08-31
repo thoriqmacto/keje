@@ -14,6 +14,7 @@ use App\Services\Media\MediaStorage;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
+use Throwable;
 
 /**
  * Source media uploads.
@@ -42,10 +43,16 @@ class ProjectMediaController extends Controller
 
         try {
             $probe = $this->ffprobe->inspectAudio($this->storage->path($stored['path']));
-        } catch (UnusableMediaException $e) {
+        } catch (Throwable $e) {
+            // A rejected upload never leaves a file behind, whatever the
+            // reason it was rejected. Only a genuinely unusable file is the
+            // uploader's problem; a missing toolchain is the server's, and
+            // that exception escapes to report itself as one.
             Storage::disk('local')->delete($stored['path']);
 
-            throw ValidationException::withMessages(['audio' => [$e->getMessage()]]);
+            throw $e instanceof UnusableMediaException
+                ? ValidationException::withMessages(['audio' => [$e->getMessage()]])
+                : $e;
         }
 
         $file = $request->file('audio');
@@ -78,10 +85,16 @@ class ProjectMediaController extends Controller
 
         try {
             $probe = $this->ffprobe->inspectImage($this->storage->path($stored['path']));
-        } catch (UnusableMediaException $e) {
+        } catch (Throwable $e) {
+            // A rejected upload never leaves a file behind, whatever the
+            // reason it was rejected. Only a genuinely unusable file is the
+            // uploader's problem; a missing toolchain is the server's, and
+            // that exception escapes to report itself as one.
             Storage::disk('local')->delete($stored['path']);
 
-            throw ValidationException::withMessages(['background' => [$e->getMessage()]]);
+            throw $e instanceof UnusableMediaException
+                ? ValidationException::withMessages(['background' => [$e->getMessage()]])
+                : $e;
         }
 
         $file = $request->file('background');

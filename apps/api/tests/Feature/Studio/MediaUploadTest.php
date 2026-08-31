@@ -111,6 +111,61 @@ class MediaUploadTest extends TestCase
     }
 
     #[Test]
+    public function an_upload_php_dropped_reports_the_server_limit_not_a_bad_file(): void
+    {
+        $project = $this->project();
+        $this->fakeProbe();
+
+        // Exactly what PHP hands Laravel when a file exceeds
+        // upload_max_filesize but the request still fits post_max_size: the
+        // field is present, the file is empty, the error code says why.
+        $dropped = new UploadedFile(
+            tempnam(sys_get_temp_dir(), 'keje'),
+            'lecture.mp3',
+            'audio/mpeg',
+            UPLOAD_ERR_INI_SIZE,
+            test: true,
+        );
+
+        $response = $this->postJson("/api/v1/content-projects/{$project->uuid}/audio", [
+            'audio' => $dropped,
+        ])->assertStatus(422);
+
+        // "The audio failed to upload." reads like a network glitch, so the
+        // obvious response is to retry the identical upload forever. The
+        // message has to name the limit that actually has to change.
+        $message = $response->json('errors.audio.0');
+
+        $this->assertStringContainsString('upload_max_filesize', $message);
+        $this->assertStringContainsString('post_max_size', $message);
+    }
+
+    #[Test]
+    public function a_missing_ffprobe_is_a_server_error_not_a_rejected_upload(): void
+    {
+        $project = $this->project();
+
+        // The real service pointed at a binary that is not there — what a
+        // wrong MEDIA_FFPROBE_PATH looks like in production.
+        $this->instance(
+            FfprobeService::class,
+            new FfprobeService('/nonexistent/ffprobe', 5),
+        );
+
+        $this->postJson("/api/v1/content-projects/{$project->uuid}/audio", [
+            'audio' => UploadedFile::fake()->create('lecture.mp3', 512, 'audio/mpeg'),
+        ])
+            // Not 422: the recording is fine, the host is not. A validation
+            // error here sends people off to re-encode a good file.
+            ->assertStatus(503)
+            ->assertJsonMissingPath('errors');
+
+        // The rejected upload still leaves nothing behind.
+        $this->assertNull($project->refresh()->source_audio_path);
+        $this->assertEmpty(Storage::disk('local')->allFiles($project->storageDirectory()));
+    }
+
+    #[Test]
     public function a_disallowed_extension_is_rejected(): void
     {
         $project = $this->project();
