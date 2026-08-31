@@ -8,6 +8,7 @@ use App\Services\Media\FfmpegService;
 use App\Services\Media\FfprobeService;
 use App\Services\Media\TemplateRegistry;
 use Illuminate\Console\Command;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Throwable;
 
@@ -310,6 +311,71 @@ class MediaDiagnoseCommand extends Command
 
         $this->good('Queue', $connection);
         $this->good('Render timeout', config('media.render_timeout').'s');
+
+        $this->checkQueueBacklog($connection);
+    }
+
+    /**
+     * Whether anything is actually consuming the media queue.
+     *
+     * A render is dispatched with onQueue('media'), so a worker started as a
+     * plain `queue:work` listens to `default` and never touches it. Nothing
+     * errors: the job simply waits forever while the studio shows a progress
+     * bar at 0%. The pending backlog is the only visible symptom, so report it
+     * here rather than leaving it to be discovered one confused render later.
+     */
+    private function checkQueueBacklog(string $connection): void
+    {
+        if ($connection !== 'database') {
+            // Redis and SQS keep their own state; depth is not readable the
+            // same way, so say so rather than implying the queue is empty.
+            $this->line('  <fg=gray>Queue depth is only readable for the database driver — check your broker directly.</>');
+
+            return;
+        }
+
+        try {
+            $table = config('queue.connections.database.table', 'jobs');
+
+            $pending = DB::table($table)->where('queue', 'media')->whereNull('reserved_at')->count();
+            $reserved = DB::table($table)->where('queue', 'media')->whereNotNull('reserved_at')->count();
+            $oldest = DB::table($table)->where('queue', 'media')->whereNull('reserved_at')->min('created_at');
+            $failed = DB::table('failed_jobs')->count();
+        } catch (Throwable $e) {
+            $this->caution('Queue backlog', 'could not be read: '.$e->getMessage());
+
+            return;
+        }
+
+        if ($pending === 0) {
+            $this->good('Media queue', $reserved > 0 ? "{$reserved} in progress" : 'empty');
+        } else {
+            $waited = $oldest === null ? null : (int) (time() - (int) $oldest);
+
+            // Minutes of untouched backlog means nothing is listening; a job
+            // enqueued seconds ago is just waiting its turn.
+            $detail = "{$pending} waiting"
+                .($waited !== null ? ', oldest '.$this->duration($waited) : '');
+
+            $waited !== null && $waited > 300
+                ? $this->bad('Media queue', $detail.' — no worker is consuming it. Run: php artisan queue:work --queue=media,default')
+                : $this->caution('Media queue', $detail);
+        }
+
+        $failed > 0
+            ? $this->caution('Failed jobs', "{$failed} — inspect with `php artisan queue:failed`")
+            : $this->good('Failed jobs', 'none');
+    }
+
+    private function duration(int $seconds): string
+    {
+        if ($seconds < 120) {
+            return "{$seconds}s";
+        }
+
+        return $seconds < 7200
+            ? intdiv($seconds, 60).'m'
+            : intdiv($seconds, 3600).'h';
     }
 
     private function checkGoogle(GoogleClientFactory $clients): void
