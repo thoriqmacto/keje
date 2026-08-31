@@ -282,8 +282,13 @@ class RenderTest extends TestCase
 
         // The message has to name the actual cause; "still queued" is what
         // the progress bar already said.
-        $this->assertStringContainsString('queue:work', $response->json('data.stalled_reason'));
-        $this->assertStringContainsString('media', $response->json('data.stalled_reason'));
+        $reason = $response->json('data.stalled_reason');
+
+        // It has to name the worker service, not just say "still queued", and
+        // not just hand over a command that dies with the shell.
+        $this->assertStringContainsString('keje-worker.service', $reason);
+        $this->assertStringContainsString('media', $reason);
+        $this->assertStringContainsString('continuously', $reason);
 
         // The attempt is still queued, not failed: it will run the moment a
         // worker appears, and marking it failed would throw the work away.

@@ -84,9 +84,15 @@ class RenderStatusCommand extends Command
         if ($queue['pending'] > 0 && ($queue['oldest_pending_seconds'] ?? 0) > 300) {
             $this->line('  <fg=red>Nothing has claimed the oldest job in '
                 .intdiv($queue['oldest_pending_seconds'], 60).'m.</>');
-            $this->line('  Start a worker on this queue:');
+            $this->line('  Is the worker service running?');
+            $this->line('    <options=bold>systemctl status keje-worker</>  ·  '
+                .'<options=bold>ps -eo user,group,pid,cmd | grep \'[q]ueue:work\'</>');
+            $this->line('  To drain the backlog right now:');
             $this->line('    <options=bold>php artisan queue:work --queue=media,default --timeout=7200 --tries=2</>');
-            $this->line('  Check whether one is already running: <options=bold>ps aux | grep "queue:work"</>');
+            // Running it by hand is a stopgap: it dies with the shell and does
+            // not come back after a reboot, so say what the permanent fix is.
+            $this->line('  That stops when the shell closes. Install the service so it does not:');
+            $this->line('    <options=bold>deploy/systemd/keje-worker.service</> (see the README)');
         }
 
         if ($queue['failed'] > 0) {

@@ -16,9 +16,11 @@ use Throwable;
  * most confusing state this app can be in — the work was accepted, so the
  * natural assumption is that it is running slowly.
  *
- * The usual cause is a worker that is not consuming the `media` queue. The job
- * is dispatched with onQueue('media'), so a plain `queue:work` (which listens
- * to `default` only) leaves it pending forever.
+ * The usual cause is no worker consuming the `media` queue at all — the worker
+ * is a service that has to stay running, and nothing in Laravel starts it. The
+ * next most common is a worker that is running but was started without
+ * `--queue=media`: the job is dispatched with onQueue('media'), so a plain
+ * `queue:work` listens to `default` only and leaves it pending forever.
  *
  * This never marks the attempt failed. The job really is still queued and will
  * run the moment a worker appears; saying otherwise would be a lie that also
@@ -47,16 +49,17 @@ class RenderQueueHealth
         // sitting unreserved in the queue table, so nothing has claimed it.
         if ($this->hasUnreservedMediaJobs()) {
             return "This render has been waiting {$waited} and no worker has picked it up."
-                .' The queue worker is probably not running, or is not listening to the'
-                .' "media" queue. Start it with: php artisan queue:work --queue=media,default';
+                .' The queue worker service is probably not running, or is not listening'
+                .' to the "media" queue. It has to run continuously — starting it by hand'
+                .' only lasts until the shell closes. See deploy/systemd/keje-worker.service.';
         }
 
         // No direct evidence — a driver whose depth is not readable from here.
         // The cause is the same in practice and so is the fix, so still name
         // it: a queued render that never starts is a worker problem.
         return "This render has been waiting {$waited} without starting."
-            .' Check that a queue worker is running on the API server and listening'
-            .' to the "media" queue: php artisan queue:work --queue=media,default';
+            .' Check that the queue worker service is running on the API server and'
+            .' listening to the "media" queue. See deploy/systemd/keje-worker.service.';
     }
 
     /**

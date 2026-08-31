@@ -819,30 +819,68 @@ php artisan render:preflight <project-uuid>  # every prerequisite for one projec
 
 ### Queue worker
 
-Rendering **must not** use the `sync` driver — that would run FFmpeg inside a web request. `media:diagnose` fails if you try.
+**The worker is a service that stays running, not a command you run to make a
+render happen.** Nothing in Laravel starts it. If no worker is listening the
+render is accepted, queued, and then waits — no error, no progress. Typing
+`php artisan queue:work` by hand works only until the SSH session closes, and
+never survives a reboot; that is a symptom of a missing service, not a workflow.
+
+So: yes, keep it always on, supervised by the host so it restarts on crash and
+comes back at boot. Two ready-to-install configs are committed — use **one**,
+not both, or two workers will compete for the same jobs:
+
+| | File | Prefer when |
+|---|---|---|
+| systemd | [`deploy/systemd/keje-worker.service`](deploy/systemd/keje-worker.service) | default — no extra package on a modern Ubuntu VPS |
+| Supervisor | [`deploy/supervisor/keje-worker.conf`](deploy/supervisor/keje-worker.conf) | Supervisor already manages other processes here |
 
 ```bash
-php artisan queue:work --queue=media,default --timeout=7200 --tries=2
+# Edit the paths inside the file first, then:
+sudo cp deploy/systemd/keje-worker.service /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now keje-worker     # `enable` is what survives a reboot
 ```
 
-Supervisor (`/etc/supervisor/conf.d/keje-worker.conf`):
+Verify it is actually running, as the right user:
 
-```ini
-[program:keje-worker]
-process_name=%(program_name)s_%(process_num)02d
-command=php /var/www/keje/apps/api/artisan queue:work --queue=media,default --timeout=7200 --tries=2 --sleep=3 --max-jobs=50
-directory=/var/www/keje/apps/api
-autostart=true
-autorestart=true
-user=www-data
-umask=0002
-numprocs=1
-redirect_stderr=true
-stdout_logfile=/var/log/keje/worker.log
-stopwaitsecs=7300
+```bash
+systemctl status keje-worker
+journalctl -u keje-worker -f                # live worker output
+ps -eo user,group,pid,cmd | grep '[q]ueue:work'
+php artisan render:status                   # queue depth, from the app's side
 ```
 
-One worker is right for a single-operator setup: renders are CPU-bound and running two in parallel makes both slower. `stopwaitsecs` must exceed the render timeout so a deploy never kills a render mid-encode.
+Rendering **must not** use the `sync` driver — that would run FFmpeg inside a
+web request. `media:diagnose` fails if you try.
+
+Three settings in those files are load-bearing, and all three fail silently:
+
+- **`--queue=media,default`.** Renders are dispatched with `onQueue('media')`. A
+  plain `queue:work` listens to `default` only and will sit idle forever next to
+  a full media queue.
+- **`User=www-data` / `umask=0002`.** These decide who owns every rendered MP4
+  and whether the directories stay group-writable. A worker run as another user
+  creates a second ownership class inside `storage/app/private` — see
+  [Permissions](#permissions).
+- **`TimeoutStopSec` / `stopwaitsecs` above `MEDIA_RENDER_TIMEOUT`.** On stop the
+  worker finishes the job it is in; a shorter timeout `SIGKILL`s a render that
+  may have been encoding for an hour.
+
+One worker is right for a single-operator setup: renders are CPU-bound and
+running two in parallel makes both slower.
+
+`--max-jobs=50` makes the worker exit on purpose after fifty jobs, and the
+supervisor immediately starts a replacement — PHP is not built to run for weeks.
+`php artisan queue:restart` during a deploy uses the same mechanism: the running
+worker finishes its job and exits, and the supervisor brings up a new one on the
+new code. Both are why `Restart=always` is right and `on-failure` is not.
+
+> **Not recommended, but honest about the alternative.** A cron entry
+> (`* * * * * cd /var/www/keje/apps/api && php artisan queue:work --queue=media,default --stop-when-empty`)
+> also drains the queue without a supervisor. It adds up to a minute of latency
+> before a render starts, gives you no `journalctl` to read, and needs a lock to
+> stop overlapping runs from double-processing. Use it only if you cannot run a
+> service.
 
 `user=www-data` is not optional bookkeeping — it decides who owns every rendered
 MP4. A worker started by hand as another user (`php artisan queue:work` over
