@@ -33,9 +33,18 @@ class RenderTest extends TestCase
 {
     use RefreshDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Dispatching a render now requires the source files to really exist,
+        // so every project built here gets them on a faked disk.
+        Storage::fake('local');
+    }
+
     private function renderableProject(User $user): ContentProject
     {
-        $project = ContentProject::factory()->withMedia()->create([
+        $project = ContentProject::factory()->withMediaFiles()->create([
             'user_id' => $user->id,
             'topic_id' => ContentTopic::factory()->create([
                 'user_id' => $user->id, 'name' => 'Riyadhush Shalihin',
@@ -119,7 +128,7 @@ class RenderTest extends TestCase
     {
         Queue::fake();
         Sanctum::actingAs($user = User::factory()->create());
-        $project = ContentProject::factory()->withMedia()->create([
+        $project = ContentProject::factory()->withMediaFiles()->create([
             'user_id' => $user->id,
             'primary_title' => str_repeat('Keutamaan Lapar Hidup Sederhana ', 8),
         ]);
@@ -171,6 +180,53 @@ class RenderTest extends TestCase
 
         $this->postJson("/api/v1/content-projects/{$theirs->uuid}/render")->assertStatus(404);
         Queue::assertNothingPushed();
+    }
+
+    #[Test]
+    public function a_render_is_refused_when_the_recorded_source_files_are_gone(): void
+    {
+        Queue::fake();
+        Sanctum::actingAs($user = User::factory()->create());
+
+        // Columns set, files absent: what a deploy that replaced storage/ or
+        // a worker on a different release leaves behind.
+        $project = ContentProject::factory()->withMedia()->create([
+            'user_id' => $user->id,
+            'primary_title' => 'Keutamaan Lapar',
+        ]);
+
+        $this->postJson("/api/v1/content-projects/{$project->uuid}/render")
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['audio']);
+
+        // The point of checking here: nothing is queued to fail later.
+        Queue::assertNothingPushed();
+        $this->assertSame(RenderStatus::MediaReady, $project->refresh()->render_status);
+    }
+
+    #[Test]
+    public function a_missing_source_at_render_time_names_the_path_it_looked_for(): void
+    {
+        $user = User::factory()->create();
+        $project = $this->renderableProject($user);
+
+        // Deleted between queueing and the worker picking it up.
+        Storage::disk('local')->delete($project->source_audio_path);
+
+        $renderJob = $project->renderJobs()->create([
+            'status' => RenderJobStatus::Queued,
+            'progress_percent' => 0,
+        ]);
+
+        (new RenderContentProjectJob($project->id, $renderJob->id))
+            ->handle(app(VideoRenderer::class));
+
+        // "missing from storage" alone is a dead end; the path is what turns
+        // it into something checkable with ls.
+        $error = $project->refresh()->render_error;
+
+        $this->assertStringContainsString($project->source_audio_path, $error);
+        $this->assertStringContainsString('Re-upload', $error);
     }
 
     // ── Status ──────────────────────────────────────────────────────────────

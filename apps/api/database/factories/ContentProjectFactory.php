@@ -3,10 +3,12 @@
 namespace Database\Factories;
 
 use App\Enums\RenderStatus;
+use App\Models\ContentProject;
 use App\Models\ContentTopic;
 use App\Models\Speaker;
 use App\Models\User;
 use Illuminate\Database\Eloquent\Factories\Factory;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
 /**
@@ -64,5 +66,29 @@ class ContentProjectFactory extends Factory
             'background_image_height' => 1080,
             'render_status' => RenderStatus::MediaReady,
         ]);
+    }
+
+    /**
+     * withMedia, plus the files actually on the private disk.
+     *
+     * The columns alone are not enough for anything that dispatches a render:
+     * the endpoint refuses to queue a project whose recorded files are gone,
+     * because that is exactly the state a deploy can leave behind. Fake the
+     * disk before using this.
+     */
+    public function withMediaFiles(): static
+    {
+        return $this->withMedia()->afterCreating(function (ContentProject $project): void {
+            // A caller may have overridden either path to null to build the
+            // "never uploaded" case; only write the ones that exist.
+            $files = [
+                $project->source_audio_path => 'fake-audio',
+                $project->background_image_path => 'fake-image',
+            ];
+
+            foreach (array_filter($files, 'filled', ARRAY_FILTER_USE_KEY) as $path => $contents) {
+                Storage::disk('local')->put($path, $contents);
+            }
+        });
     }
 }
