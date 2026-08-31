@@ -5,6 +5,7 @@ namespace App\Services\Media;
 use App\Exceptions\Media\RenderFailedException;
 use App\Models\ContentProject;
 use Closure;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 
 /**
@@ -82,9 +83,27 @@ class VideoRenderer
         $audioPath = $disk->path($project->source_audio_path);
         $backgroundPath = $disk->path($project->background_image_path);
 
-        foreach (['audio' => $audioPath, 'background image' => $backgroundPath] as $label => $path) {
+        $sources = [
+            'audio' => [$project->source_audio_path, $audioPath],
+            'background image' => [$project->background_image_path, $backgroundPath],
+        ];
+
+        foreach ($sources as $label => [$relative, $path]) {
             if (! is_file($path)) {
-                throw new RenderFailedException("The source {$label} is missing from storage.");
+                // Naming the path it looked for is the difference between a
+                // dead end and a two-minute fix: the database and the disk
+                // disagree, and only the path says where to look. The
+                // relative path is the app's own, not a server detail — the
+                // absolute one goes to the log.
+                Log::warning('Render source missing from storage', [
+                    'project_id' => $project->id,
+                    'absolute_path' => $path,
+                ]);
+
+                throw new RenderFailedException(
+                    "The source {$label} is missing from storage (expected {$relative}). "
+                    .'Re-upload it, then render again.',
+                );
             }
         }
 

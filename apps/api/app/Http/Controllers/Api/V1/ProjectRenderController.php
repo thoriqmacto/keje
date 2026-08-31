@@ -56,6 +56,13 @@ class ProjectRenderController extends Controller
             ]);
         }
 
+        // The columns can be set while the files are gone — a deploy that
+        // replaced storage/, or a worker on a different release. Catch it
+        // here for the same reason unfittable text is caught here: a 422 the
+        // person can act on beats a queued job that fails minutes later with
+        // nowhere obvious to look.
+        $this->assertSourcesExist($project);
+
         $project->load(['topic', 'speaker']);
 
         try {
@@ -98,6 +105,29 @@ class ProjectRenderController extends Controller
             'message' => 'Render queued.',
             'data' => new ContentProjectResource($project->fresh(['topic', 'speaker'])),
         ], 202);
+    }
+
+    /**
+     * Both source files are really on disk, not merely recorded.
+     *
+     * @throws ValidationException
+     */
+    private function assertSourcesExist(ContentProject $project): void
+    {
+        $disk = Storage::disk('local');
+
+        $sources = [
+            'audio' => [$project->source_audio_path, 'lecture recording'],
+            'background' => [$project->background_image_path, 'background image'],
+        ];
+
+        foreach ($sources as $field => [$path, $noun]) {
+            if (! is_file($disk->path($path))) {
+                throw ValidationException::withMessages([
+                    $field => ["The {$noun} is no longer on the server. Please upload it again."],
+                ]);
+            }
+        }
     }
 
     /** Lightweight polling endpoint for the studio's progress bar. */
