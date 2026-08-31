@@ -85,6 +85,10 @@ export type ContentProjectSummary = {
         remote_status: string | null;
         remote_label: string | null;
         remote_synced_at: string | null;
+        /** A correction in flight, so the list can say so plainly. */
+        is_replacing: boolean;
+        /** Broke mid-workflow. The published video may still be fine. */
+        replacement_failed: boolean;
     };
     created_at: string | null;
     updated_at: string | null;
@@ -177,6 +181,14 @@ export type ContentProject = {
         publish_at: string | null;
         error: string | null;
         metadata: YouTubeMetadata | null;
+        /** The fingerprint of the render this video was made from. */
+        render_input_hash: string | null;
+        /**
+         * The video on YouTube came from an older render, so the frames are
+         * wrong rather than the description. The one signal that separates
+         * "edit the metadata" from "replace the video".
+         */
+        video_is_outdated: boolean;
         /** Google's current view, kept apart from our pipeline status. */
         remote: {
             status: string | null;
@@ -206,9 +218,92 @@ export type ContentProject = {
         youtube_synced_at: string | null;
     };
 
+    /** In-flight correction, and whether a new one may be started. */
+    replacement: {
+        active: YouTubeReplacement | null;
+        can_replace: boolean;
+        blocked_reason: string | null;
+        blocked_message: string | null;
+        needs_render: boolean;
+        needs_reconnect: boolean;
+        needs_media: boolean;
+    };
+
+    /** Working files are kept for a while so a mistake can still be fixed. */
+    retention: {
+        finalized_at: string | null;
+        within_correction_window: boolean;
+    };
+
     render_settings: { loudnorm?: boolean } | null;
     created_at: string | null;
     updated_at: string | null;
+};
+
+/** What to do with the video being replaced. */
+export type OldVideoDisposition = "delete" | "keep_private";
+
+export type ReplacementStatus =
+    | "pending"
+    | "uploading"
+    | "uploaded"
+    | "disposing_old"
+    | "old_disposed"
+    | "finalizing"
+    | "cancelling"
+    | "completed"
+    | "cancelled"
+    | "failed";
+
+/**
+ * A correction in flight.
+ *
+ * `old_still_current` is the field that matters most while something is going
+ * wrong: it answers "is my published video still there", which is the only
+ * question anyone actually has at that moment.
+ */
+export type YouTubeReplacement = {
+    id: string;
+    status: ReplacementStatus;
+    label: string;
+    old_still_current: boolean;
+    old_video_id: string;
+    new_video_id: string | null;
+    old_disposition: OldVideoDisposition;
+    stage: "upload" | "dispose_old" | "finalize" | null;
+    upload_progress: number;
+    is_active: boolean;
+    is_failed: boolean;
+    is_cancellable: boolean;
+    error: string | null;
+    blocking_summary: string | null;
+    started_at: string | null;
+    uploaded_at: string | null;
+    old_disposed_at: string | null;
+    completed_at: string | null;
+    cancelled_at: string | null;
+};
+
+/**
+ * One video this project has had on YouTube.
+ *
+ * Replacing changes the public URL, so superseded entries are kept: they are
+ * the only record of a link that may still be circulating.
+ */
+export type YouTubePublication = {
+    id: string;
+    video_id: string;
+    url: string | null;
+    title: string | null;
+    privacy_status: string | null;
+    is_current: boolean;
+    disposition: string | null;
+    exists_on_youtube: boolean;
+    render_input_hash: string | null;
+    uploaded_at: string | null;
+    became_current_at: string | null;
+    replaced_at: string | null;
+    remote_deleted_at: string | null;
 };
 
 export type RenderStatusPayload = {
@@ -326,6 +421,12 @@ export type YouTubeCapabilities = {
     read_channel: boolean;
     upload_video: boolean;
     manage_playlists: boolean;
+    /**
+     * videos.update and videos.delete — editing or removing a video that
+     * already exists, which the upload scope does not cover. Without it a
+     * connection can publish and cannot correct.
+     */
+    manage_videos: boolean;
 };
 
 export type DriveCapabilities = {
