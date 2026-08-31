@@ -158,7 +158,11 @@ class RenderPreflightCommand extends Command
 
             return;
         } catch (Throwable $e) {
+            // Usually a missing FFmpeg toolchain. The permission facts are
+            // still the reason someone ran this, so they must not disappear
+            // because the host cannot decode media.
             $this->bad(ucfirst($label), 'could not be inspected: '.$e->getMessage());
+            $this->paths($relative, $absolute, $access);
 
             return;
         }

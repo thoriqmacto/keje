@@ -157,6 +157,17 @@ class PathAccessTest extends TestCase
         $this->assertFalse(PathAccess::hasSetgid($dir));
 
         chmod($dir, 02770);
+        clearstatcache(true, $dir);
+
+        // POSIX lets the kernel drop S_ISGID when the caller is not in the
+        // file's group and lacks CAP_FSETID, and some filesystems refuse it
+        // outright. Assert against what the OS actually did rather than what
+        // chmod was asked for — a test that fails on the runner teaches
+        // nothing about the code.
+        if ((fileperms($dir) & 02000) === 0) {
+            $this->markTestSkipped('This filesystem or user cannot set the setgid bit.');
+        }
+
         $this->assertTrue(PathAccess::hasSetgid($dir));
         $this->assertSame('2770', PathAccess::mode($dir));
     }

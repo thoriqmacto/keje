@@ -144,27 +144,46 @@ class PathAccess
     /** Octal mode, e.g. "2770" — with the setgid bit visible. */
     public static function mode(string $path): ?string
     {
-        $perms = @fileperms($path);
+        $perms = self::perms($path);
 
-        return $perms === false ? null : substr(sprintf('%o', $perms), -4);
+        return $perms === null ? null : substr(sprintf('%o', $perms), -4);
     }
 
     public static function owner(string $path): ?string
     {
+        clearstatcache(true, $path);
+
         return self::name(@fileowner($path), 'posix_getpwuid');
     }
 
     public static function group(string $path): ?string
     {
+        clearstatcache(true, $path);
+
         return self::name(@filegroup($path), 'posix_getgrgid');
     }
 
     /** The setgid bit — what makes new files inherit the directory's group. */
     public static function hasSetgid(string $path): bool
     {
+        $perms = self::perms($path);
+
+        return $perms !== null && ($perms & 02000) !== 0;
+    }
+
+    /**
+     * fileperms() reads PHP's stat cache, which survives a chmod made by
+     * something else — another process, or a fix applied between two calls in
+     * the same command. A diagnostic reporting a mode that is no longer true
+     * is worse than one that is slow, so every read is uncached.
+     */
+    private static function perms(string $path): ?int
+    {
+        clearstatcache(true, $path);
+
         $perms = @fileperms($path);
 
-        return $perms !== false && ($perms & 02000) !== 0;
+        return $perms === false ? null : $perms;
     }
 
     public static function currentUser(): string
