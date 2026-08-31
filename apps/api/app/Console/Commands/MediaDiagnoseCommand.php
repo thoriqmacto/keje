@@ -443,7 +443,8 @@ class MediaDiagnoseCommand extends Command
                 .($waited !== null ? ', oldest '.$this->duration($waited) : '');
 
             $waited !== null && $waited > 300
-                ? $this->bad('Media queue', $detail.' — no worker is consuming it. Run: php artisan queue:work --queue=media,default')
+                ? $this->bad('Media queue', $detail.' — no worker is consuming it. '
+                    .'Install deploy/systemd/keje-worker.service, or check: systemctl status keje-worker')
                 : $this->caution('Media queue', $detail);
         }
 

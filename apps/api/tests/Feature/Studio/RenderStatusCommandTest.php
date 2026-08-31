@@ -26,7 +26,7 @@ class RenderStatusCommandTest extends TestCase
     }
 
     #[Test]
-    public function a_long_queued_attempt_names_the_worker_command(): void
+    public function a_long_queued_attempt_names_the_worker_service(): void
     {
         $project = $this->project();
         $attempt = $project->renderJobs()->create([
@@ -35,9 +35,11 @@ class RenderStatusCommandTest extends TestCase
         ]);
         $attempt->forceFill(['created_at' => now()->subHour()])->save();
 
+        // Naming the service, not just a command to type: typing it by hand is
+        // what leaves someone restarting the worker after every reboot.
         $this->artisan('render:status')
             ->expectsOutputToContain('Keutamaan Lapar')
-            ->expectsOutputToContain('queue:work')
+            ->expectsOutputToContain('keje-worker.service')
             ->assertSuccessful();
     }
 
@@ -50,7 +52,7 @@ class RenderStatusCommandTest extends TestCase
         ]);
 
         $this->artisan('render:status')
-            ->doesntExpectOutputToContain('queue:work')
+            ->doesntExpectOutputToContain('keje-worker.service')
             ->assertSuccessful();
     }
 

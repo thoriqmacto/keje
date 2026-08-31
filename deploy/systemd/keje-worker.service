@@ -1,0 +1,84 @@
+# Always-on media queue worker for Keje.
+#
+# `php artisan queue:work` is a long-running process, not a command you run
+# when you want a render to happen. Nothing in Laravel starts it: if no worker
+# is listening, a queued render simply waits — no error, no progress. Typing it
+# by hand works only until the SSH session ends, and never survives a reboot.
+#
+# Committed rather than hand-written on the box so the three settings that
+# quietly break rendering cannot drift:
+#
+#   1. User/Group=www-data. This decides who owns every rendered MP4. A worker
+#      running as anyone else creates a second ownership class inside
+#      storage/app/private, and those files are then unreachable from the
+#      PHP-FPM request that wants to serve them.
+#   2. UMask=0002. mkdir is umask-masked where chmod is not, so at the usual
+#      0022 the group-write bit is stripped and the 2770 directories the disk
+#      config asks for land as 2750. See the README's Permissions section.
+#   3. TimeoutStopSec exceeds MEDIA_RENDER_TIMEOUT. On stop the worker finishes
+#      the job it is in the middle of; a shorter timeout SIGKILLs a render
+#      part-way through an encode that may have been running for an hour.
+#
+# Placeholders to fill in before installing:
+#   - WorkingDirectory and ExecStart paths (replace /var/www/keje)
+#   - the PHP binary, if you are not on the packaged php8.2
+#   - After=/Requires= the database service you actually run
+#
+# Install:
+#   sudo cp deploy/systemd/keje-worker.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now keje-worker
+#
+# Verify:
+#   systemctl status keje-worker
+#   journalctl -u keje-worker -f
+#   ps -eo user,group,pid,cmd | grep '[q]ueue:work'
+
+[Unit]
+Description=Keje media queue worker (FFmpeg renders, Drive and YouTube uploads)
+After=network.target mariadb.service
+Wants=mariadb.service
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+
+# Directories created at runtime keep group-write, so the deploy user can
+# still read and write them. Without this the permission model silently
+# degrades on every new upload.
+UMask=0002
+
+WorkingDirectory=/var/www/keje/apps/api
+
+# --queue=media,default is the whole point: renders are dispatched with
+# onQueue('media'), and a worker started without it listens to `default` only
+# and never touches them.
+#
+# --max-jobs recycles the process periodically; PHP is not built to run for
+# weeks, and Restart=always brings it straight back.
+ExecStart=/usr/bin/php /var/www/keje/apps/api/artisan queue:work \
+    --queue=media,default \
+    --timeout=7200 \
+    --tries=2 \
+    --sleep=3 \
+    --max-jobs=50
+
+# Always, not on-failure: --max-jobs makes the worker exit cleanly on purpose,
+# and that exit still needs to bring a new one up. `php artisan queue:restart`
+# during a deploy is the same mechanism — the worker stops, systemd starts a
+# replacement running the new code.
+Restart=always
+RestartSec=5
+
+# Finish the render in flight before dying. Must stay above
+# MEDIA_RENDER_TIMEOUT (default 7200) or a deploy kills a job mid-encode.
+KillSignal=SIGTERM
+TimeoutStopSec=7300
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=keje-worker
+
+[Install]
+WantedBy=multi-user.target
