@@ -338,6 +338,24 @@ export async function refreshDriveCatalog(): Promise<void> {
  * Cheap: FFmpeg seeks by keyframe and stops after one frame, so this is a few
  * quick seeks rather than anything resembling a transcode.
  */
+/**
+ * The local topic for a YouTube playlist, created on first use.
+ *
+ * Keeps a playlist and a topic as one concept: the renderer draws the topic
+ * name and historical projects point at the topic row, so the shadow has to
+ * exist — but nobody should have to maintain it by hand.
+ */
+export async function resolveTopicFromPlaylist(
+    playlistId: string,
+    title: string | null,
+): Promise<ContentTopic> {
+    const { data } = await api.post<{ data: ContentTopic }>("/topics/from-playlist", {
+        youtube_playlist_id: playlistId,
+        title,
+    });
+    return data.data;
+}
+
 export async function generateThumbnailFrames(
     projectId: string,
     timestamp?: number,

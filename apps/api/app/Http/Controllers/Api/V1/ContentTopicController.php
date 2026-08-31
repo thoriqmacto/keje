@@ -7,6 +7,7 @@ use App\Http\Requests\Api\V1\StoreContentTopicRequest;
 use App\Http\Requests\Api\V1\UpdateContentTopicRequest;
 use App\Http\Resources\Api\V1\ContentTopicResource;
 use App\Models\ContentTopic;
+use App\Services\Google\PlaylistTopicResolver;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -93,5 +94,29 @@ class ContentTopicController extends Controller
         }
 
         return $slug;
+    }
+
+    /**
+     * The topic for a YouTube playlist, creating the local shadow if needed.
+     *
+     * Lets the studio offer playlists as topics without asking anyone to
+     * maintain both. Identity is the playlist id, never the title: two topics
+     * that happen to share a name are not the same topic, and merging them on
+     * a string match would silently reassign someone's projects.
+     */
+    public function resolveFromPlaylist(Request $request, PlaylistTopicResolver $resolver): JsonResponse
+    {
+        $validated = $request->validate([
+            'youtube_playlist_id' => ['required', 'string', 'max:255'],
+            'title' => ['nullable', 'string', 'max:255'],
+        ]);
+
+        $topic = $resolver->resolve(
+            $request->user(),
+            $validated['youtube_playlist_id'],
+            $validated['title'] ?? null,
+        );
+
+        return response()->json(['data' => new ContentTopicResource($topic)]);
     }
 }

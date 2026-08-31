@@ -75,6 +75,11 @@ Route::prefix('v1')->group(function () {
         // ── Content Studio ────────────────────────────────────────────────
         // Topics group projects into a lecture series and later map to a
         // YouTube playlist.
+        // Resolve a YouTube playlist to its local topic shadow, creating it
+        // on first use. Declared before the resource so it is not swallowed
+        // by the {topic} parameter.
+        Route::post('topics/from-playlist', [ContentTopicController::class, 'resolveFromPlaylist']);
+
         Route::apiResource('topics', ContentTopicController::class)
             ->parameters(['topics' => 'topic']);
 

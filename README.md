@@ -829,7 +829,29 @@ Keje Topic                YouTube Playlist
 Riyadhush Shalihin   →    PLxxxxxxxxxxxx
 ```
 
-Linking is **never required to render**. Creating playlists from Keje is deliberately not implemented yet — you pick from the ones the channel already has.
+**YouTube playlists are the canonical topic.** A local topic and a playlist
+were always the same grouping described twice, maintained separately and mapped
+by hand. Choosing a playlist as a project's topic now resolves (or creates) its
+local shadow on the server, so there is one choice rather than two.
+
+The `ContentTopic` table stays, and is not redundant: it carries what YouTube
+has no concept of — the name drawn on the Kajian Tematik frame, the TEMA
+sequence, and the link to every historical project. Dropping it would break
+rendering and orphan finished work.
+
+Identity is the **playlist id**, never the name. Two playlists that happen to
+share a title are not the same topic, and merging them on a string match would
+silently reassign someone's projects. One exception, and only one: an unmapped
+legacy topic whose name matches exactly is adopted rather than duplicated
+beside it, which keeps its history and its projects.
+
+Legacy topics with no playlist stay selectable under **Not linked to YouTube**,
+so a historical project can still be re-attached to its own topic and mapped to
+a playlist when convenient. Nothing is deleted.
+
+`/studio/topics` redirects to `/youtube`; the route was in the main navigation
+until this sprint, so bookmarks keep working. Creating playlists from Keje is
+still deliberately not implemented — you pick from the ones the channel has.
 
 Two levels decide where a video lands, project first:
 

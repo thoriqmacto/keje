@@ -5,9 +5,11 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { SpeakerSelector, TopicSelector } from "@/components/studio/selectors";
-import { apiErrorMessage, updateProject } from "@/lib/studio/api";
-import type { ContentProject } from "@/lib/types/studio";
+import { SpeakerSelector } from "@/components/studio/selectors";
+import { PlaylistTopicSelector } from "@/components/studio/playlist-topic-selector";
+import useSWR from "swr";
+import { apiErrorMessage, listTopics, studioKeys, updateProject } from "@/lib/studio/api";
+import type { ContentProject, ContentTopic } from "@/lib/types/studio";
 
 /**
  * The grouping a project belongs to, editable for its whole life.
@@ -28,6 +30,17 @@ export function ProjectPropertiesCard({
 }) {
     const [workingTitle, setWorkingTitle] = useState(project.working_title);
     const [topicId, setTopicId] = useState<string | null>(project.topic?.id ?? null);
+    const { data: topics } = useSWR(studioKeys.topics, listTopics, { revalidateOnFocus: false });
+    // The chosen topic as an object, so the selector can show its playlist.
+    const [topic, setTopic] = useState<ContentTopic | null>(
+        project.topic
+            ? {
+                  id: project.topic.id,
+                  name: project.topic.name,
+                  youtube_playlist_id: project.topic.youtube_playlist_id ?? null,
+              } as ContentTopic
+            : null,
+    );
     const [sequence, setSequence] = useState(
         project.topic_sequence == null ? "" : String(project.topic_sequence),
     );
@@ -80,7 +93,17 @@ export function ProjectPropertiesCard({
                 </p>
             </div>
 
-            <TopicSelector value={topicId} onChange={setTopicId} />
+            {/* Playlists are the canonical topic now; local topics that
+                predate them stay selectable so historical projects can still
+                be re-attached to their own. */}
+            <PlaylistTopicSelector
+                value={topic}
+                topics={topics}
+                onChange={(id, next) => {
+                    setTopicId(id);
+                    setTopic(next);
+                }}
+            />
 
             <div className="flex flex-col gap-1.5">
                 <Label htmlFor="topic_sequence">TEMA</Label>
