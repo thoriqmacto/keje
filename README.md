@@ -636,6 +636,92 @@ The last three are necessarily unauthenticated. The OAuth callback is reached by
 
 ---
 
+## Editing a project after it exists
+
+A Content Project stays editable for its whole life. The project page carries a
+**Project properties** card — working title, topic, TEMA, speaker — using the
+same selectors as New Content. Nothing is locked in at creation, so a project
+created without a speaker (the easy mistake, since the field is optional) can be
+given one afterwards rather than recreated.
+
+### Renders go stale rather than silently lying
+
+Editing creates a correctness problem: a finished MP4 was produced from inputs
+that may since have changed. `RenderInputFingerprint` hashes everything that
+reaches a frame — the drawn text, template, render settings, source media
+identity and the cut list — and the render job records the hash it encoded
+from. When the two differ the studio says **Outdated** rather than *Rendered*:
+
+```
+Render
+Rendered ✓
+
+This render is out of date
+The project changed after it was made, so the video below no longer matches.
+```
+
+Deliberately excluded: the **working title** (a label for humans, never drawn)
+and **publishing metadata** (YouTube's business, not FFmpeg's). Renaming a
+project must not throw away a two-hour encode.
+
+Nothing is deleted. A Drive backup or an uploaded YouTube video represents an
+earlier revision and stays traceable; only the local output is marked as no
+longer current.
+
+## Removing sections of a recording
+
+The **Audio editing** card on the project page removes unwanted spans before
+rendering. `Cut 18 → 23` removes those five seconds — the result is `0–18`
+followed by `23–end`. It is not a trim down to that range.
+
+```
+Original          01:27:12
+Removed           00:00:06.50
+Rendered length   01:27:05.50
+```
+
+**The uploaded MP3 is never rewritten.** The cut list is stored separately and
+applied at encode time with `atrim` / `asetpts` / `concat`, so a mis-typed
+timestamp costs a re-render rather than the lecture. The cuts run before the
+loudness and waveform chain, so the drawn waveform matches what is heard, and
+both `-t` and the progress fraction follow the edited duration — a job measured
+against the original recording would report 92% and stop.
+
+Overlapping ranges are refused rather than merged: silently widening a cut
+removes audio nobody chose to remove. Touching ranges are merged, ranges are
+sorted, and removing the whole recording is refused.
+
+The request carries only validated numbers. `AudioEditService` builds the filter
+graph; no filter, expression or option ever comes from a client.
+
+Playback uses a short-lived signed link from `/media-links`, the same model as
+the rendered video — an `<audio>` element cannot attach a bearer token, and the
+recording stays on the private disk.
+
+## After a render
+
+Before starting a render, choose what happens when it succeeds:
+
+```
+After render
+[x] Back up to Google Drive
+[x] Upload to YouTube
+```
+
+The choices are **snapshotted onto the render attempt**, not the project: the
+job may sit on the queue, and editing the project afterwards must not change
+what happens when it finishes. A destination that is not connected is dropped
+when the render is queued rather than discovered by a worker twenty minutes
+later.
+
+Both run as independent jobs. A Drive or YouTube failure never turns a good
+render into a failed one, and a project that already holds a `youtube_video_id`
+is never uploaded again however often it is re-rendered.
+
+Pruning is unaffected and safe in either completion order: Drive first keeps the
+MP4 because YouTube still wants it; YouTube first prunes nothing because there
+is no backup to fall back on.
+
 ## Topics and YouTube playlists
 
 A `ContentTopic` is the lecture series. It exists so you type "Riyadhush Shalihin" once, and it carries an optional `youtube_playlist_id`:

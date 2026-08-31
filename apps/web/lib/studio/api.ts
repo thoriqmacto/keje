@@ -112,6 +112,23 @@ export async function createProject(input: ProjectInput): Promise<ContentProject
     return data.data;
 }
 
+/**
+ * Save the removed sections.
+ *
+ * Non-destructive: the uploaded recording is untouched, so this is cheap to
+ * change and costs only a re-render.
+ */
+export async function saveAudioEdits(
+    id: string,
+    cuts: { type: string; start: number; end: number }[],
+): Promise<ContentProject> {
+    const { data } = await api.put<{ data: ContentProject }>(
+        `/content-projects/${id}/audio-edits`,
+        { audio_edits: cuts },
+    );
+    return data.data;
+}
+
 export async function updateProject(id: string, input: ProjectInput): Promise<ContentProject> {
     const { data } = await api.patch<{ data: ContentProject }>(`/content-projects/${id}`, input);
     return data.data;
@@ -169,8 +186,21 @@ export async function getPreview(id: string): Promise<TemplateLayout> {
     return data.data;
 }
 
-export async function startRender(id: string): Promise<void> {
-    await api.post(`/content-projects/${id}/render`);
+/**
+ * Queue a render, and say what should happen once it succeeds.
+ *
+ * The choices travel with the request rather than being remembered in the
+ * browser: the job may sit on the queue for a while, and the server
+ * snapshots them onto the attempt.
+ */
+export async function startRender(
+    id: string,
+    postActions: { drive_backup: boolean; youtube_upload: boolean } = {
+        drive_backup: false,
+        youtube_upload: false,
+    },
+): Promise<void> {
+    await api.post(`/content-projects/${id}/render`, { post_actions: postActions });
 }
 
 export async function getRenderStatus(id: string): Promise<RenderStatusPayload> {

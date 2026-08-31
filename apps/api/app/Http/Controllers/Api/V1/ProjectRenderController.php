@@ -208,13 +208,25 @@ class ProjectRenderController extends Controller
     {
         abort_unless($request->user()->can('view', $project), 404);
 
+        $ttl = now()->addMinutes((int) config('media.stream_link_ttl_minutes'));
+
+        // The source recording is playable as soon as it is uploaded — the
+        // audio editor needs it long before anything has been rendered.
+        $audioUrl = blank($project->source_audio_path) ? null
+            : URL::temporarySignedRoute('content-projects.source-audio', $ttl, [
+                'project' => $project->uuid,
+            ]);
+
         if (blank($project->output_path)) {
             return response()->json([
-                'data' => ['video_url' => null, 'download_url' => null, 'expires_at' => null],
+                'data' => [
+                    'video_url' => null,
+                    'download_url' => null,
+                    'audio_url' => $audioUrl,
+                    'expires_at' => $audioUrl === null ? null : $ttl->toIso8601String(),
+                ],
             ]);
         }
-
-        $ttl = now()->addMinutes((int) config('media.stream_link_ttl_minutes'));
 
         return response()->json([
             'data' => [
@@ -226,6 +238,7 @@ class ProjectRenderController extends Controller
                     'project' => $project->uuid,
                     'disposition' => 'attachment',
                 ]),
+                'audio_url' => $audioUrl,
                 'expires_at' => $ttl->toIso8601String(),
             ],
         ]);

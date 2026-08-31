@@ -79,19 +79,19 @@ class ProjectMediaController extends Controller
     }
 
     /**
-     * Stream the source recording for in-browser playback.
+     * Stream the source recording, for a signed link only.
      *
-     * Choosing where to cut means hearing exactly where to cut, and the
-     * recording is private. Same model as the rendered video: authenticated,
-     * served from the private disk, never a path in a response.
+     * An <audio> element cannot attach a bearer token, which is exactly why
+     * the rendered video is served this way too: the short-lived signature
+     * issued by /media-links is the authorization. Unauthenticated by
+     * necessity, never public — the signature is the capability, and the file
+     * stays on the private disk.
      *
      * response()->file() honours Range, so seeking into a 500 MB lecture
-     * fetches the bytes around the playhead rather than the whole file.
+     * fetches the bytes around the playhead rather than the whole recording.
      */
     public function streamAudio(Request $request, ContentProject $project): BinaryFileResponse
     {
-        abort_unless($request->user()->can('view', $project), 404);
-
         abort_if(blank($project->source_audio_path), 404);
 
         $path = $this->storage->path($project->source_audio_path);

@@ -30,6 +30,13 @@ Route::prefix('v1')->group(function () {
         ->middleware('signed')
         ->name('content-projects.stream');
 
+    // Source playback for the audio editor. Same model as the video stream:
+    // an <audio> element cannot send a bearer token, so a short-lived
+    // signature from /media-links is the authorization.
+    Route::get('/content-projects/{project}/source-audio', [ProjectMediaController::class, 'streamAudio'])
+        ->middleware('signed')
+        ->name('content-projects.source-audio');
+
     /*
      * Google OAuth callbacks, one per service. Necessarily unauthenticated —
      * Google redirects the browser straight here — so the single-use `state`
@@ -89,9 +96,7 @@ Route::prefix('v1')->group(function () {
             // Removed sections. Non-destructive: the uploaded recording is
             // never rewritten, so this only records decisions.
             Route::put('/audio-edits', [ProjectAudioEditController::class, 'update']);
-            // Authenticated source playback, so the owner can find the exact
-            // timestamps to cut. Range-capable; never exposes a path.
-            Route::get('/audio', [ProjectMediaController::class, 'streamAudio']);
+
             Route::post('/background', [ProjectMediaController::class, 'storeBackground']);
 
             // Rendering is always queued; FFmpeg never runs in a request.

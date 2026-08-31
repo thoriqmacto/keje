@@ -8,7 +8,13 @@ const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({ variable: "--font-geist-mono", subsets: ["latin"] });
 
 export const metadata: Metadata = {
-    title: APP_NAME,
+    // Every page sets its own `title`; this turns it into "Keje | Studio".
+    // Derived from APP_NAME rather than a literal, so a renamed deployment
+    // renames its tabs too.
+    title: {
+        default: APP_NAME,
+        template: `${APP_NAME} | %s`,
+    },
     description: `${APP_NAME} — YouTube content production for lecture recordings.`,
 };
 

@@ -91,7 +91,14 @@ export default function StudioListClient() {
                                             label={
                                                 project.render.status === "rendering"
                                                     ? `${project.render.progress}%`
-                                                    : project.render.label
+                                                    // The file exists and is a
+                                                    // real render — of an
+                                                    // earlier revision. Saying
+                                                    // "Rendered" would claim it
+                                                    // still matches.
+                                                    : project.render.stale
+                                                      ? "Outdated"
+                                                      : project.render.label
                                             }
                                         />
                                     </td>

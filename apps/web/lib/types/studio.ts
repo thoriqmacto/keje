@@ -75,7 +75,7 @@ export type ContentProjectSummary = {
     audio_duration: number | null;
     has_audio: boolean;
     has_background: boolean;
-    render: { status: RenderStatus; label: string; progress: number };
+    render: { status: RenderStatus; label: string; progress: number; stale: boolean };
     drive: { status: DriveStatus; label: string };
     youtube: { status: YouTubeStatus; label: string; scheduled_at: string | null };
     created_at: string | null;
@@ -96,6 +96,15 @@ export type ContentProject = {
     } | null;
     topic_sequence: number | null;
     speaker: { id: string; name: string; render_name: string } | null;
+
+    /** Removed sections, with the arithmetic already done server-side. */
+    audio_edits: {
+        cuts: { type: string; start: number; end: number }[];
+        source_duration: number | null;
+        removed_duration: number;
+        /** What the render will actually be — also what progress measures. */
+        effective_duration: number | null;
+    } | null;
 
     primary_title: string | null;
     subtitle: string | null;
@@ -129,6 +138,8 @@ export type ContentProject = {
         status: RenderStatus;
         label: string;
         progress: number;
+        /** The output was produced from inputs that have since changed. */
+        stale: boolean;
         error: string | null;
         rendered_at: string | null;
         output_size: number | null;
