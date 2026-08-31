@@ -12,8 +12,10 @@ use App\Models\ContentProject;
 use App\Services\Media\FfprobeService;
 use App\Services\Media\MediaStorage;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpFoundation\BinaryFileResponse;
 use Throwable;
 
 /**
@@ -73,6 +75,33 @@ class ProjectMediaController extends Controller
 
         return response()->json([
             'data' => new ContentProjectResource($project->load(['topic', 'speaker'])),
+        ]);
+    }
+
+    /**
+     * Stream the source recording, for a signed link only.
+     *
+     * An <audio> element cannot attach a bearer token, which is exactly why
+     * the rendered video is served this way too: the short-lived signature
+     * issued by /media-links is the authorization. Unauthenticated by
+     * necessity, never public — the signature is the capability, and the file
+     * stays on the private disk.
+     *
+     * response()->file() honours Range, so seeking into a 500 MB lecture
+     * fetches the bytes around the playhead rather than the whole recording.
+     */
+    public function streamAudio(Request $request, ContentProject $project): BinaryFileResponse
+    {
+        abort_if(blank($project->source_audio_path), 404);
+
+        $path = $this->storage->path($project->source_audio_path);
+
+        abort_unless(is_file($path), 404);
+
+        return response()->file($path, [
+            'Content-Type' => $project->source_audio_mime ?: 'audio/mpeg',
+            'Accept-Ranges' => 'bytes',
+            'Cache-Control' => 'private, max-age=0, must-revalidate',
         ]);
     }
 

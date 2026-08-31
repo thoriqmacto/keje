@@ -45,6 +45,11 @@ class ContentProjectSummaryResource extends JsonResource
                 'label' => $this->render_status->label(),
                 // Supplied by the index query's subselect; 0 when never rendered.
                 'progress' => (int) ($this->render_progress ?? 0),
+                // The output was produced from inputs that have since
+                // changed, so it no longer represents this project. Not an
+                // error and not a reason to delete anything — the file is
+                // still a real render of an earlier revision.
+                'stale' => app(\App\Services\Media\RenderInputFingerprint::class)->isStale($this->resource),
             ],
             'drive' => [
                 'status' => $this->drive_status->value,
@@ -54,6 +59,14 @@ class ContentProjectSummaryResource extends JsonResource
                 'status' => $this->youtube_status->value,
                 'label' => $this->youtube_status->label(),
                 'scheduled_at' => $this->youtube_publish_at?->toIso8601String(),
+
+                // The list shows what YouTube says now, so a video that has
+                // since published stops claiming to be scheduled.
+                'remote_status' => $this->youtube_remote_status,
+                'remote_label' => $this->youtube_remote_status === null
+                    ? null
+                    : \App\Enums\YouTubeRemoteStatus::from($this->youtube_remote_status)->label(),
+                'remote_synced_at' => $this->youtube_remote_synced_at?->toIso8601String(),
             ],
 
             'created_at' => $this->created_at?->toIso8601String(),

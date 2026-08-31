@@ -40,6 +40,8 @@ export function useAuthedObjectUrl(path: string | null): string | null {
 export type MediaLinks = {
     video_url: string | null;
     download_url: string | null;
+    /** The source recording, for the audio editor. Available before any render. */
+    audio_url: string | null;
     expires_at: string | null;
 };
 

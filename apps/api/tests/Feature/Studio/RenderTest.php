@@ -10,8 +10,10 @@ use App\Models\ContentProject;
 use App\Models\ContentTopic;
 use App\Models\Speaker;
 use App\Models\User;
+use App\Services\Media\AudioEditService;
 use App\Services\Media\FfmpegService;
 use App\Services\Media\FontMetrics;
+use App\Services\Media\RenderInputFingerprint;
 use App\Services\Media\TemplateRegistry;
 use App\Services\Media\TextLayoutService;
 use App\Services\Media\VideoRenderer;
@@ -219,7 +221,7 @@ class RenderTest extends TestCase
         ]);
 
         (new RenderContentProjectJob($project->id, $renderJob->id))
-            ->handle(app(VideoRenderer::class));
+            ->handle(app(VideoRenderer::class), app(RenderInputFingerprint::class));
 
         // "missing from storage" alone is a dead end; the path is what turns
         // it into something checkable with ls.
@@ -333,7 +335,7 @@ class RenderTest extends TestCase
             'log' => 'ok',
         ]);
 
-        (new RenderContentProjectJob($project->id, $job->id))->handle($renderer);
+        (new RenderContentProjectJob($project->id, $job->id))->handle($renderer, app(RenderInputFingerprint::class));
 
         $this->assertSame(RenderStatus::Rendered, $project->refresh()->render_status);
         $this->assertSame(RenderJobStatus::Succeeded, $job->refresh()->status);
@@ -353,7 +355,7 @@ class RenderTest extends TestCase
         $renderer->shouldReceive('render')->once()
             ->andThrow(new RenderFailedException('The source audio could not be decoded.'));
 
-        (new RenderContentProjectJob($project->id, $job->id))->handle($renderer);
+        (new RenderContentProjectJob($project->id, $job->id))->handle($renderer, app(RenderInputFingerprint::class));
 
         $project->refresh();
         $this->assertSame(RenderStatus::Failed, $project->render_status);
@@ -390,13 +392,13 @@ class RenderTest extends TestCase
         $renderer = Mockery::mock(VideoRenderer::class);
         $renderer->shouldNotReceive('render');
 
-        (new RenderContentProjectJob($project->id, $job->id))->handle($renderer);
+        (new RenderContentProjectJob($project->id, $job->id))->handle($renderer, app(RenderInputFingerprint::class));
     }
 
     // ── FFmpeg command ──────────────────────────────────────────────────────
 
     /** @return list<string> */
-    private function buildArgs(array $content = []): array
+    private function buildArgs(array $content = [], array $audioSegments = [], float $duration = 1800.0): array
     {
         $registry = app(TemplateRegistry::class);
         $layoutService = new TextLayoutService(app(FontMetrics::class));
@@ -413,6 +415,7 @@ class RenderTest extends TestCase
 
         $renderer = new VideoRenderer(
             $registry, $layoutService, app(FontMetrics::class), app(FfmpegService::class),
+            app(AudioEditService::class),
         );
 
         $textPaths = [];
@@ -428,7 +431,8 @@ class RenderTest extends TestCase
             backgroundPath: '/tmp/bg.jpg',
             textPaths: $textPaths,
             outputPath: '/tmp/out.mp4',
-            duration: 1800.0,
+            duration: $duration,
+            audioSegments: $audioSegments,
         );
     }
 
@@ -456,6 +460,40 @@ class RenderTest extends TestCase
             $this->assertNotFalse($index, "Missing {$flag}");
             $this->assertSame($value, $args[$index + 1], "Wrong value for {$flag}");
         }
+    }
+
+    #[Test]
+    public function audio_cuts_reach_the_filter_graph_and_bound_the_output(): void
+    {
+        // 18 -> 23 removed from a 60s recording: the graph must trim the two
+        // kept spans and concat them, and -t must bound the output to the
+        // edited length rather than the original.
+        $edits = app(AudioEditService::class);
+        $cuts = $edits->normalize([['type' => 'cut', 'start' => 18.0, 'end' => 23.0]], 60.0);
+        $segments = $edits->keptSegments($cuts, 60.0);
+
+        $args = $this->buildArgs([], $segments, $edits->keptDuration($cuts, 60.0));
+        $graph = $this->filterGraph($args);
+
+        $this->assertStringContainsString('atrim=start=0.000:end=18.000', $graph);
+        $this->assertStringContainsString('atrim=start=23.000:end=60.000', $graph);
+        $this->assertStringContainsString('concat=n=2:v=0:a=1[acut]', $graph);
+
+        // The normalise/split chain must consume the cut output, or the
+        // waveform would be drawn from audio nobody hears.
+        $this->assertStringContainsString('[acut]aresample=', $graph);
+
+        $this->assertSame('55.000', $args[array_search('-t', $args, true) + 1]);
+    }
+
+    #[Test]
+    public function a_project_with_no_cuts_keeps_the_simple_single_input_chain(): void
+    {
+        $graph = $this->filterGraph($this->buildArgs());
+
+        $this->assertStringNotContainsString('atrim', $graph);
+        $this->assertStringNotContainsString('concat=', $graph);
+        $this->assertStringContainsString('[1:a]aresample=', $graph);
     }
 
     #[Test]

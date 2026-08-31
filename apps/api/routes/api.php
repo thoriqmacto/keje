@@ -5,9 +5,11 @@ use App\Http\Controllers\Api\V1\ContentProjectController;
 use App\Http\Controllers\Api\V1\ContentTopicController;
 use App\Http\Controllers\Api\V1\DriveCatalogController;
 use App\Http\Controllers\Api\V1\GoogleIntegrationController;
+use App\Http\Controllers\Api\V1\ProjectAudioEditController;
 use App\Http\Controllers\Api\V1\ProjectMediaController;
 use App\Http\Controllers\Api\V1\ProjectPublicationController;
 use App\Http\Controllers\Api\V1\ProjectRenderController;
+use App\Http\Controllers\Api\V1\ProjectThumbnailController;
 use App\Http\Controllers\Api\V1\SpeakerController;
 use App\Http\Controllers\Api\V1\YouTubeCatalogController;
 use Illuminate\Support\Facades\Route;
@@ -28,6 +30,13 @@ Route::prefix('v1')->group(function () {
     Route::get('/content-projects/{project}/stream', [ProjectRenderController::class, 'stream'])
         ->middleware('signed')
         ->name('content-projects.stream');
+
+    // Source playback for the audio editor. Same model as the video stream:
+    // an <audio> element cannot send a bearer token, so a short-lived
+    // signature from /media-links is the authorization.
+    Route::get('/content-projects/{project}/source-audio', [ProjectMediaController::class, 'streamAudio'])
+        ->middleware('signed')
+        ->name('content-projects.source-audio');
 
     /*
      * Google OAuth callbacks, one per service. Necessarily unauthenticated —
@@ -66,6 +75,11 @@ Route::prefix('v1')->group(function () {
         // ── Content Studio ────────────────────────────────────────────────
         // Topics group projects into a lecture series and later map to a
         // YouTube playlist.
+        // Resolve a YouTube playlist to its local topic shadow, creating it
+        // on first use. Declared before the resource so it is not swallowed
+        // by the {topic} parameter.
+        Route::post('topics/from-playlist', [ContentTopicController::class, 'resolveFromPlaylist']);
+
         Route::apiResource('topics', ContentTopicController::class)
             ->parameters(['topics' => 'topic']);
 
@@ -84,6 +98,11 @@ Route::prefix('v1')->group(function () {
 
             // Source media. ffprobe validates these, not the file extension.
             Route::post('/audio', [ProjectMediaController::class, 'storeAudio']);
+
+            // Removed sections. Non-destructive: the uploaded recording is
+            // never rewritten, so this only records decisions.
+            Route::put('/audio-edits', [ProjectAudioEditController::class, 'update']);
+
             Route::post('/background', [ProjectMediaController::class, 'storeBackground']);
 
             // Rendering is always queued; FFmpeg never runs in a request.
@@ -107,6 +126,17 @@ Route::prefix('v1')->group(function () {
             Route::post('/youtube', [ProjectPublicationController::class, 'youtube']);
             // Retry playlist membership only — never re-uploads the video.
             Route::post('/youtube/playlist', [ProjectPublicationController::class, 'playlist']);
+            // Read-only refresh of the remote video state. Never writes to
+            // YouTube; never re-uploads.
+            Route::post('/youtube/sync', [ProjectPublicationController::class, 'syncYouTube']);
+
+            // Choosing a frame as the YouTube thumbnail. Kept apart from the
+            // upload endpoints so a thumbnail retry can never reach
+            // videos.insert and publish a second copy.
+            Route::post('/thumbnail/frames', [ProjectThumbnailController::class, 'generate']);
+            Route::post('/thumbnail/select', [ProjectThumbnailController::class, 'select']);
+            Route::post('/thumbnail/push', [ProjectThumbnailController::class, 'push']);
+            Route::get('/thumbnail', [ProjectThumbnailController::class, 'show']);
         });
 
         // Google connection status: both services in one payload.

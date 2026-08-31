@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ReactNode } from "react";
+import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { toast } from "sonner";
@@ -16,10 +17,6 @@ import {
 } from "@/components/ui/card";
 import { apiErrorMessage, studioKeys } from "@/lib/studio/api";
 import { formatDateTime } from "@/lib/studio/format";
-import {
-    DriveIntegrationDetail,
-    YouTubeIntegrationDetail,
-} from "@/components/studio/integration-panels";
 import type { GoogleIntegrations, GoogleServiceKey } from "@/lib/types/studio";
 
 /** Messages for the ?youtube= / ?drive= codes the API callbacks redirect back with. */
@@ -139,17 +136,31 @@ export default function IntegrationsClient() {
                 >
                     {data.youtube.connected && (
                         <>
-                            {/* The live channel, its playlists and its recent
-                                uploads, read through Laravel. Replaces the two
-                                stored fields this card used to show. */}
-                            <YouTubeIntegrationDetail
-                                integrations={data}
-                                onReconnect={() => void onConnect("youtube")}
-                            />
+                            {/* Settings manages the connection; browsing the
+                                channel is a different job and has its own
+                                page. A catalog embedded here buried the
+                                connect/disconnect controls it exists for. */}
+                            <dl className="grid grid-cols-[10rem_1fr] gap-y-2 text-sm">
+                                <dt className="text-muted-foreground">Channel</dt>
+                                <dd>{data.youtube.channel_title ?? "—"}</dd>
+                                <dt className="text-muted-foreground">Connected</dt>
+                                <dd>{formatDateTime(data.youtube.connected_at)}</dd>
+                            </dl>
 
-                            <p className="text-xs text-muted-foreground">
-                                Connected {formatDateTime(data.youtube.connected_at)}
-                            </p>
+                            {data.youtube.needs_scope_upgrade && (
+                                <div className="rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+                                    <p className="font-medium">Reconnect to enable playlist assignment</p>
+                                    <p>
+                                        This connection was made before Keje asked for playlist
+                                        permission. Uploads and channel reads keep working; only
+                                        adding videos to playlists needs it.
+                                    </p>
+                                </div>
+                            )}
+
+                            <Button asChild variant="outline" size="sm" className="self-start">
+                                <Link href="/youtube">Browse YouTube</Link>
+                            </Button>
 
                             {/* A wrong channel must be loud: uploading a lecture
                                 to the wrong place is not undoable. Drive backup
@@ -210,11 +221,14 @@ export default function IntegrationsClient() {
                 >
                     {data.drive.connected && (
                         <>
-                            <DriveIntegrationDetail integrations={data} />
+                            <dl className="grid grid-cols-[10rem_1fr] gap-y-2 text-sm">
+                                <dt className="text-muted-foreground">Connected</dt>
+                                <dd>{formatDateTime(data.drive.connected_at)}</dd>
+                            </dl>
 
-                            <p className="text-xs text-muted-foreground">
-                                Connected {formatDateTime(data.drive.connected_at)}
-                            </p>
+                            <Button asChild variant="outline" size="sm" className="self-start">
+                                <Link href="/drive">Browse Google Drive</Link>
+                            </Button>
                         </>
                     )}
 

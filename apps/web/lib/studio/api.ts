@@ -112,6 +112,23 @@ export async function createProject(input: ProjectInput): Promise<ContentProject
     return data.data;
 }
 
+/**
+ * Save the removed sections.
+ *
+ * Non-destructive: the uploaded recording is untouched, so this is cheap to
+ * change and costs only a re-render.
+ */
+export async function saveAudioEdits(
+    id: string,
+    cuts: { type: string; start: number; end: number }[],
+): Promise<ContentProject> {
+    const { data } = await api.put<{ data: ContentProject }>(
+        `/content-projects/${id}/audio-edits`,
+        { audio_edits: cuts },
+    );
+    return data.data;
+}
+
 export async function updateProject(id: string, input: ProjectInput): Promise<ContentProject> {
     const { data } = await api.patch<{ data: ContentProject }>(`/content-projects/${id}`, input);
     return data.data;
@@ -169,8 +186,21 @@ export async function getPreview(id: string): Promise<TemplateLayout> {
     return data.data;
 }
 
-export async function startRender(id: string): Promise<void> {
-    await api.post(`/content-projects/${id}/render`);
+/**
+ * Queue a render, and say what should happen once it succeeds.
+ *
+ * The choices travel with the request rather than being remembered in the
+ * browser: the job may sit on the queue for a while, and the server
+ * snapshots them onto the attempt.
+ */
+export async function startRender(
+    id: string,
+    postActions: { drive_backup: boolean; youtube_upload: boolean } = {
+        drive_backup: false,
+        youtube_upload: false,
+    },
+): Promise<void> {
+    await api.post(`/content-projects/${id}/render`, { post_actions: postActions });
 }
 
 export async function getRenderStatus(id: string): Promise<RenderStatusPayload> {
@@ -296,6 +326,80 @@ export async function refreshDriveCatalog(): Promise<void> {
  * Deliberately separate from the upload endpoint: this can never publish a
  * second copy of the video.
  */
+/**
+ * Ask YouTube what it currently says about this video.
+ *
+ * Read-only. It never changes privacy and never re-uploads — if someone made
+ * a public video private from the YouTube app, that is the truth.
+ */
+/**
+ * Extract candidate frames from the rendered video.
+ *
+ * Cheap: FFmpeg seeks by keyframe and stops after one frame, so this is a few
+ * quick seeks rather than anything resembling a transcode.
+ */
+/**
+ * The local topic for a YouTube playlist, created on first use.
+ *
+ * Keeps a playlist and a topic as one concept: the renderer draws the topic
+ * name and historical projects point at the topic row, so the shadow has to
+ * exist — but nobody should have to maintain it by hand.
+ */
+export async function resolveTopicFromPlaylist(
+    playlistId: string,
+    title: string | null,
+): Promise<ContentTopic> {
+    const { data } = await api.post<{ data: ContentTopic }>("/topics/from-playlist", {
+        youtube_playlist_id: playlistId,
+        title,
+    });
+    return data.data;
+}
+
+export async function generateThumbnailFrames(
+    projectId: string,
+    timestamp?: number,
+): Promise<{ timestamp: number; url: string }[]> {
+    const { data } = await api.post<{ data: { timestamp: number; url: string }[] }>(
+        `/content-projects/${projectId}/thumbnail/frames`,
+        timestamp === undefined ? {} : { timestamp },
+    );
+    return data.data;
+}
+
+export async function selectThumbnail(projectId: string, timestamp: number): Promise<ContentProject> {
+    const { data } = await api.post<{ data: ContentProject }>(
+        `/content-projects/${projectId}/thumbnail/select`,
+        { timestamp },
+    );
+    return data.data;
+}
+
+/**
+ * Send the chosen thumbnail to YouTube.
+ *
+ * thumbnails.set only — this can never reach videos.insert, so retrying a
+ * refused thumbnail cannot publish a second copy of the video.
+ */
+export async function pushThumbnail(projectId: string): Promise<ContentProject> {
+    const { data } = await api.post<{ data: ContentProject }>(
+        `/content-projects/${projectId}/thumbnail/push`,
+    );
+    return data.data;
+}
+
+/** Same-origin proxy path, so the <img> carries the session. */
+export function thumbnailFrameUrl(projectId: string, timestamp: number): string {
+    return `/api/v1/content-projects/${projectId}/thumbnail?timestamp=${timestamp}`;
+}
+
+export async function syncYouTubeStatus(projectId: string): Promise<ContentProject> {
+    const { data } = await api.post<{ data: ContentProject }>(
+        `/content-projects/${projectId}/youtube/sync`,
+    );
+    return data.data;
+}
+
 export async function assignYouTubePlaylist(projectId: string): Promise<ContentProject> {
     const { data } = await api.post<{ data: ContentProject }>(
         `/content-projects/${projectId}/youtube/playlist`,

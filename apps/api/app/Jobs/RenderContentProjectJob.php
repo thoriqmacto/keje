@@ -2,12 +2,14 @@
 
 namespace App\Jobs;
 
+use App\Enums\DriveStatus;
 use App\Enums\RenderJobStatus;
 use App\Enums\RenderStatus;
 use App\Exceptions\Media\RenderFailedException;
 use App\Exceptions\Media\TextDoesNotFitException;
 use App\Models\ContentProject;
 use App\Models\RenderJob;
+use App\Services\Media\RenderInputFingerprint;
 use App\Services\Media\VideoRenderer;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -43,7 +45,7 @@ class RenderContentProjectJob implements ShouldQueue
         $this->onQueue('media');
     }
 
-    public function handle(VideoRenderer $renderer): void
+    public function handle(VideoRenderer $renderer, RenderInputFingerprint $fingerprint): void
     {
         $project = ContentProject::with(['topic', 'speaker'])->find($this->projectId);
         $job = RenderJob::find($this->renderJobId);
@@ -57,9 +59,15 @@ class RenderContentProjectJob implements ShouldQueue
             return;
         }
 
+        // Captured before the encode, from the inputs this attempt is about
+        // to use. Recording it afterwards would hash edits made while FFmpeg
+        // was running and wrongly call the fresh output current.
+        $inputHash = $fingerprint->for($project);
+
         $job->forceFill([
             'status' => RenderJobStatus::Running,
             'started_at' => now(),
+            'render_input_hash' => $inputHash,
         ])->save();
 
         $project->forceFill(['render_status' => RenderStatus::Rendering])->save();
@@ -87,7 +95,13 @@ class RenderContentProjectJob implements ShouldQueue
                 'output_duration' => $result['duration'],
                 'rendered_at' => now(),
                 'render_error' => null,
+                'last_render_input_hash' => $inputHash,
             ])->save();
+
+            // Only after the project row carries output_path: the upload jobs
+            // read the project, and dispatching before the save would hand
+            // them a project with nothing to upload.
+            $this->dispatchPostActions($project, $job);
         } catch (TextDoesNotFitException|RenderFailedException $e) {
             // Expected, explainable failures — the message is user-facing.
             $this->fail($project, $job, $e->getMessage(), $e);
@@ -101,6 +115,41 @@ class RenderContentProjectJob implements ShouldQueue
 
             $this->fail($project, $job, 'Rendering failed unexpectedly. Please try again.', $e);
         }
+    }
+
+    /**
+     * Queue whatever was asked for when this render was requested.
+     *
+     * Independent jobs on purpose. A Drive or YouTube failure must never turn
+     * a good render into a failed one — the MP4 exists either way, and
+     * collapsing them would hide which half actually broke.
+     *
+     * Both are checked against downstream state first: a project that already
+     * holds a YouTube video id must never be uploaded again, however many
+     * times the render is repeated.
+     */
+    private function dispatchPostActions(ContentProject $project, RenderJob $job): void
+    {
+        $actions = (array) ($job->post_actions ?? []);
+
+        if (($actions['drive_backup'] ?? false) && ! $this->alreadyOnDrive($project)) {
+            UploadVideoToGoogleDriveJob::dispatch($project->id);
+        }
+
+        if (($actions['youtube_upload'] ?? false) && blank($project->youtube_video_id)) {
+            UploadVideoToYouTubeJob::dispatch($project->id);
+        }
+    }
+
+    /**
+     * A confirmed Drive copy of *this* render.
+     *
+     * Re-rendering deliberately does not count: the new MP4 is different
+     * bytes, so backing it up is not a duplicate.
+     */
+    private function alreadyOnDrive(ContentProject $project): bool
+    {
+        return $project->drive_status === DriveStatus::Uploading;
     }
 
     /**

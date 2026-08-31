@@ -68,6 +68,11 @@ class ContentProjectResource extends JsonResource
                 'height' => $this->background_image_height,
             ] : null,
 
+            // Removed sections, plus the arithmetic the studio would
+            // otherwise have to repeat: the effective length is what the
+            // render will actually be.
+            'audio_edits' => $this->audioEditSummary(),
+
             'is_renderable' => $this->isRenderable(),
 
             'render' => [
@@ -75,6 +80,11 @@ class ContentProjectResource extends JsonResource
                 'label' => $this->render_status->label(),
                 'progress' => $latest?->progress_percent ?? 0,
                 'error' => $this->render_error,
+                // The output was produced from inputs that have since
+                // changed, so it no longer represents this project. Not an
+                // error and not a reason to delete anything — the file is
+                // still a real render of an earlier revision.
+                'stale' => app(\App\Services\Media\RenderInputFingerprint::class)->isStale($this->resource),
                 'rendered_at' => $this->rendered_at?->toIso8601String(),
                 'output_size' => $this->output_size,
                 'output_duration' => $this->output_duration,
@@ -113,6 +123,30 @@ class ContentProjectResource extends JsonResource
                 'publish_at' => $this->youtube_publish_at?->toIso8601String(),
                 'error' => $this->youtube_error,
                 'metadata' => $this->youtube_metadata,
+                // What Google says now, kept apart from our own pipeline status:
+                // "our upload failed" and "the video is private" are different
+                // facts and must not collapse into one value.
+                'remote' => [
+                    'status' => $this->youtube_remote_status,
+                    'label' => $this->youtube_remote_status === null
+                        ? null
+                        : \App\Enums\YouTubeRemoteStatus::from($this->youtube_remote_status)->label(),
+                    'privacy_status' => $this->youtube_remote_privacy_status,
+                    'publish_at' => $this->youtube_remote_publish_at?->toIso8601String(),
+                    'synced_at' => $this->youtube_remote_synced_at?->toIso8601String(),
+                    'sync_error' => $this->youtube_remote_sync_error,
+                ],
+            ],
+
+            // Thumbnail state is its own block: a failed thumbnail on a
+            // video that uploaded fine is not a failed upload.
+            'thumbnail' => [
+                'timestamp' => $this->thumbnail_timestamp,
+                'selected' => filled($this->thumbnail_path),
+                'generated_at' => $this->thumbnail_generated_at?->toIso8601String(),
+                'youtube_status' => $this->youtube_thumbnail_status,
+                'youtube_error' => $this->youtube_thumbnail_error,
+                'youtube_synced_at' => $this->youtube_thumbnail_synced_at?->toIso8601String(),
             ],
 
             'render_settings' => $this->render_settings,

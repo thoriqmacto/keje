@@ -39,5 +39,7 @@ export const config = {
         "/dashboard/:path*",
         "/studio/:path*",
         "/settings/:path*",
+        "/youtube/:path*",
+        "/drive/:path*",
     ],
 };

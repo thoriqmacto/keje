@@ -7,7 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { SpeakerSelector, TopicSelector } from "@/components/studio/selectors";
+import { SpeakerSelector } from "@/components/studio/selectors";
+import { PlaylistTopicSelector } from "@/components/studio/playlist-topic-selector";
 import {
     apiErrorMessage,
     createProject,
@@ -52,7 +53,13 @@ export default function NewContentClient() {
     const youtubeConnected = integrations?.youtube.connected ?? false;
 
     const { data: topics } = useSWR(studioKeys.topics, listTopics, { revalidateOnFocus: false });
-    const selectedTopic = topics?.find((topic) => topic.id === topicId) ?? null;
+    // A topic just resolved from a playlist is not in the cached list yet,
+    // so it wins over the lookup until the list revalidates.
+    const [resolvedTopic, setResolvedTopic] = useState<ContentTopic | null>(null);
+    const selectedTopic =
+        resolvedTopic?.id === topicId
+            ? resolvedTopic
+            : (topics?.find((topic) => topic.id === topicId) ?? null);
     // A topic that already points at a playlist supplies the default, so the
     // usual case needs no choice at all.
     const topicPlaylistId = selectedTopic?.youtube_playlist_id ?? null;
@@ -141,10 +148,16 @@ export default function NewContentClient() {
                             </p>
                         </div>
 
-                        <TopicSelector
-                            value={topicId}
-                            onChange={setTopicId}
-                            onTopicLoaded={onTopicLoaded}
+                        <PlaylistTopicSelector
+                            value={selectedTopic ?? null}
+                            topics={topics}
+                            onChange={(id, topic) => {
+                                setTopicId(id);
+                                setResolvedTopic(topic);
+                                // A playlist that is already a topic knows
+                                // where its numbering got to.
+                                if (topic) onTopicLoaded(topic);
+                            }}
                         />
 
                         <div className="flex flex-col gap-2">

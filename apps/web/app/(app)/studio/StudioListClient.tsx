@@ -91,7 +91,14 @@ export default function StudioListClient() {
                                             label={
                                                 project.render.status === "rendering"
                                                     ? `${project.render.progress}%`
-                                                    : project.render.label
+                                                    // The file exists and is a
+                                                    // real render — of an
+                                                    // earlier revision. Saying
+                                                    // "Rendered" would claim it
+                                                    // still matches.
+                                                    : project.render.stale
+                                                      ? "Outdated"
+                                                      : project.render.label
                                             }
                                         />
                                     </td>
@@ -107,7 +114,14 @@ export default function StudioListClient() {
                                             <ProjectStatusBadge
                                                 pipeline="youtube"
                                                 status={project.youtube.status}
-                                                label={project.youtube.label}
+                                                // What YouTube says now wins:
+                                                // a scheduled video publishes
+                                                // itself, and the pipeline
+                                                // value was frozen at upload.
+                                                label={
+                                                    project.youtube.remote_label
+                                                    ?? project.youtube.label
+                                                }
                                             />
                                             {project.youtube.scheduled_at && (
                                                 <span className="text-[11px] text-muted-foreground">

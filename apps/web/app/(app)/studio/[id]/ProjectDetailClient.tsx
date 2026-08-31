@@ -24,6 +24,11 @@ import { ProjectStatusBadge } from "@/components/studio/status-badge";
 import { TemplateTextForm } from "@/components/studio/template-text-form";
 import { YouTubeMetadataForm } from "@/components/studio/youtube-form";
 import { YouTubeDestinationSummary } from "@/components/studio/youtube-destination";
+import { ProjectPropertiesCard } from "@/components/studio/project-properties";
+import { AudioEditorCard } from "@/components/studio/audio-editor";
+import { PostRenderOptions } from "@/components/studio/post-render-options";
+import { ThumbnailPicker } from "@/components/studio/thumbnail-picker";
+import { useDocumentTitle } from "@/lib/use-document-title";
 import {
     apiErrorMessage,
     backupToDrive,
@@ -31,6 +36,7 @@ import {
     getPreview,
     getProject,
     startRender,
+    syncYouTubeStatus,
     studioKeys,
     updateProject,
     uploadAudio,
@@ -51,7 +57,18 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     } = useSWR(studioKeys.project(projectId), () => getProject(projectId));
 
     const render = useRenderStatus(projectId, project?.render.status ?? "draft");
+    // The working title is behind a bearer token, so the page renders with
+    // its static metadata title and refines it once the project arrives.
+    useDocumentTitle(project?.working_title);
+
     const renderStatus = render.data?.status ?? project?.render.status ?? "draft";
+
+    // What should happen once the render succeeds. Sent with the request and
+    // snapshotted onto the attempt, so it cannot drift while the job queues.
+    const [postActions, setPostActions] = useState({
+        drive_backup: false,
+        youtube_upload: false,
+    });
 
     // Template text is edited locally and saved explicitly, so typing does not
     // fire a request per keystroke.
@@ -93,13 +110,17 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
         }
     }, [renderStatus, mutate]);
 
+    // Also fetched when there is only source audio and no render: the audio
+    // editor needs a signed link long before anything has been encoded.
+    const needsLinks = Boolean(project?.render.has_output || project?.source_audio?.stored);
+
     useEffect(() => {
-        if (project?.render.has_output) {
+        if (needsLinks) {
             getMediaLinks(projectId).then(setLinks).catch(() => setLinks(null));
         } else {
             setLinks(null);
         }
-    }, [project?.render.has_output, projectId, project?.render.rendered_at]);
+    }, [needsLinks, projectId, project?.render.rendered_at]);
 
     const suggestedYouTubeTitle = useMemo(() => {
         if (!project) return "";
@@ -147,7 +168,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
 
     async function onRender() {
         try {
-            await startRender(projectId);
+            await startRender(projectId, postActions);
             toast.success("Render queued.");
             await Promise.all([mutate(), render.mutate()]);
         } catch (error) {
@@ -205,7 +226,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                     <ProjectStatusBadge
                         pipeline="youtube"
                         status={project.youtube.status}
-                        label={`YouTube: ${project.youtube.label}`}
+                        label={`YouTube: ${project.youtube.remote.label ?? project.youtube.label}`}
                     />
                 </div>
             </div>
@@ -251,6 +272,27 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                                 progress={render.data?.progress ?? 0}
                                 stalledReason={render.data?.stalled_reason ?? null}
                             />
+
+                            {/* The MP4 exists and is a real render — of an
+                                earlier revision. Saying "Rendered" here would
+                                claim it matches the project as it stands. */}
+                            {project.render.stale && !inFlight && (
+                                <div className="rounded-md bg-amber-500/10 px-3 py-2 text-sm text-amber-700 dark:text-amber-400">
+                                    <p className="font-medium">This render is out of date</p>
+                                    <p>
+                                        The project changed after it was made, so the video below
+                                        no longer matches. Render again to bring it up to date.
+                                    </p>
+                                </div>
+                            )}
+
+                            {!inFlight && (
+                                <PostRenderOptions
+                                    value={postActions}
+                                    onChange={setPostActions}
+                                    disabled={!project.is_renderable}
+                                />
+                            )}
 
                             {project.render.error && (
                                 <div className="rounded-md bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400">
@@ -387,6 +429,41 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                         </CardContent>
                     </Card>
 
+                    {/* Editable for the project's whole life. A project
+                        created without a speaker used to be stuck that way,
+                        which is what showed as "—" in the Studio list. */}
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Project properties</CardTitle>
+                            <CardDescription>
+                                Grouping and attribution. Changing the topic, TEMA or speaker
+                                changes the video, so it will need rendering again.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <ProjectPropertiesCard project={project} onSaved={() => void mutate()} />
+                        </CardContent>
+                    </Card>
+
+                    {project.source_audio?.stored && (
+                        <Card>
+                            <CardHeader>
+                                <CardTitle>Audio editing</CardTitle>
+                                <CardDescription>
+                                    Remove sections you do not want. The uploaded recording is
+                                    never changed — the cuts are applied when it renders.
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent>
+                                <AudioEditorCard
+                                    project={project}
+                                    audioUrl={links?.audio_url ?? null}
+                                    onSaved={() => void mutate()}
+                                />
+                            </CardContent>
+                        </Card>
+                    )}
+
                     <Card>
                         <CardHeader>
                             <CardTitle>Kajian Tematik title</CardTitle>
@@ -498,6 +575,22 @@ function PublicationCard({
     onYouTube: () => Promise<void>;
     onChanged: () => void;
 }) {
+    const [syncing, setSyncing] = useState(false);
+
+    /** Read-only: never changes privacy, never re-uploads. */
+    async function onSyncYouTube() {
+        setSyncing(true);
+        try {
+            await syncYouTubeStatus(project.id);
+            onChanged();
+            toast.success("Refreshed from YouTube.");
+        } catch (error) {
+            toast.error(apiErrorMessage(error, "Could not reach YouTube."));
+        } finally {
+            setSyncing(false);
+        }
+    }
+
     const rendered = project.render.has_output;
 
     return (
@@ -582,6 +675,16 @@ function PublicationCard({
                                 ? "Retry upload"
                                 : "Upload to YouTube"}
                         </Button>
+                        {project.youtube.video_id && (
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={syncing}
+                                onClick={() => void onSyncYouTube()}
+                            >
+                                {syncing ? "Checking…" : "Refresh from YouTube"}
+                            </Button>
+                        )}
                         {project.youtube.url && (
                             <a
                                 href={project.youtube.url}
@@ -593,6 +696,44 @@ function PublicationCard({
                             </a>
                         )}
                     </div>
+
+                    {/* What Google says now, kept apart from our own pipeline
+                        status. A scheduled video publishes itself, and people
+                        change privacy from the YouTube app. */}
+                    {project.youtube.remote.label && (
+                        <dl className="grid grid-cols-[8rem_1fr] gap-y-1 text-xs">
+                            <dt className="text-muted-foreground">On YouTube</dt>
+                            <dd className="font-medium">{project.youtube.remote.label}</dd>
+
+                            {project.youtube.remote.publish_at && (
+                                <>
+                                    <dt className="text-muted-foreground">Publishes</dt>
+                                    <dd>{formatDateTime(project.youtube.remote.publish_at)}</dd>
+                                </>
+                            )}
+
+                            <dt className="text-muted-foreground">Checked</dt>
+                            <dd>{formatDateTime(project.youtube.remote.synced_at)}</dd>
+                        </dl>
+                    )}
+
+                    {/* Choosing a frame is part of publishing, and only
+                        possible once there is a render to take one from. */}
+                    {rendered && (
+                        <div className="border-t pt-4">
+                            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                Thumbnail
+                            </p>
+                            <ThumbnailPicker project={project} onChanged={onChanged} />
+                        </div>
+                    )}
+
+                    {project.youtube.remote.sync_error && (
+                        <p className="text-xs text-amber-700 dark:text-amber-400">
+                            Could not reach YouTube: {project.youtube.remote.sync_error} Showing the
+                            last known state.
+                        </p>
+                    )}
                     {!rendered && (
                         <p className="text-xs text-muted-foreground">
                             Render the video first.

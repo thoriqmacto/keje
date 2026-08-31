@@ -636,6 +636,190 @@ The last three are necessarily unauthenticated. The OAuth callback is reached by
 
 ---
 
+## Choosing a thumbnail
+
+Once a project has rendered, the publishing card offers frames from the video
+itself — a quarter, half and three-quarters of the way in, plus any timestamp
+you type. Never the first or last frame: a lecture opens and closes on
+near-static artwork, so a thumbnail of the title card is what the video already
+looks like in a list.
+
+Extraction is cheap. `-ss` before `-i` makes FFmpeg seek by keyframe instead of
+decoding up to the mark, and `-frames:v 1` stops immediately, so three
+candidates are three quick seeks rather than three passes over the video.
+
+**No OAuth change and no reconnect.** `thumbnails.set` is covered by the
+`youtube.upload` scope every connection already grants.
+
+Sending the thumbnail is a separate action from uploading the video, which is
+what makes **Retry thumbnail** safe: it calls `thumbnails.set` and has no path
+back to `videos.insert`, so a retry can never publish a second copy. A channel
+that is not verified for custom thumbnails gets that explanation rather than a
+raw Google error, and the failure is reported on its own:
+
+```
+Render                 Succeeded
+Drive                  Succeeded
+YouTube video          Succeeded
+YouTube thumbnail      Failed  ← the video is published and stays published
+```
+
+Thumbnails survive pruning. They are a few dozen kilobytes and are still needed
+for a retry after the MP4 has gone to Drive.
+
+## Connected Google pages
+
+Two top-level pages browse the connected accounts:
+
+| Route | Shows |
+|---|---|
+| `/youtube` | channel profile, playlists, recent uploads, granted capabilities |
+| `/drive` | account, storage quota, backup folder, the files Keje created |
+
+**Settings → Integrations manages the connection** — connect, reconnect,
+disconnect, permissions — and links to those pages rather than embedding the
+catalogs. A catalog in Settings buried the controls the page exists for.
+
+Drive stays on `drive.file`. The page shows what Keje created and says so;
+widening the scope to browse everything would trade the point of the narrow
+grant for a file picker nobody asked for.
+
+`/studio/topics` redirects to `/youtube`. A playlist and a local topic were
+always the same grouping described twice, and existing bookmarks keep working.
+
+### Why YouTube images were blank
+
+The Content-Security-Policy allowed images from `'self'`, `data:`, `blob:` and
+the API origin only. Thumbnails and channel avatars come from Google's CDN, so
+every one of them was blocked before it left the browser — silently, with the
+pages simply rendering holes.
+
+Fixed with an explicit host allow-list in `lib/security-headers.ts`:
+
+```
+i.ytimg.com  i9.ytimg.com  yt3.ggpht.com  yt3.googleusercontent.com  lh3.googleusercontent.com
+```
+
+Not `img-src https:` and not a wildcard — widening the directive to fix a
+thumbnail would hand every origin on the internet a place to render pixels in
+the page. A server-side image proxy was the alternative and buys nothing here:
+these are public CDN links to the user's own channel, so proxying adds
+bandwidth, a cache and an SSRF surface in exchange for hiding a request Google
+is already the other end of.
+
+## What YouTube says now
+
+Our upload pipeline status and the video's current state on YouTube are
+separate fields, because they answer different questions. A scheduled video
+publishes itself and people change privacy from the YouTube app; neither
+reaches Keje unless it asks.
+
+```
+YouTube status
+Scheduled   31 Aug 2026 · 19:00      →   Published   31 Aug 2026 · 19:00
+```
+
+`videos.list` costs one quota unit and takes fifty ids, so `search.list` (a
+hundred units) is never needed — the ids are known. The studio list answers
+from stored state and queues a bounded background refresh for whatever is
+oldest; fifty projects never means fifty synchronous calls. A scheduled upload
+also dispatches one delayed read just past its publish time, which needs no
+scheduler to install — the persistent worker already drains that queue.
+
+Tune with `YOUTUBE_REMOTE_SYNC_TTL_MINUTES` (default 30) and
+`YOUTUBE_REMOTE_SYNC_BATCH` (default 10). **Refresh from YouTube** on the
+project page forces an immediate check.
+
+The sync is read-only in both directions. It never sets privacy and never
+re-uploads: if a public video was made private, that is the truth to report,
+not a difference to correct.
+
+## Editing a project after it exists
+
+A Content Project stays editable for its whole life. The project page carries a
+**Project properties** card — working title, topic, TEMA, speaker — using the
+same selectors as New Content. Nothing is locked in at creation, so a project
+created without a speaker (the easy mistake, since the field is optional) can be
+given one afterwards rather than recreated.
+
+### Renders go stale rather than silently lying
+
+Editing creates a correctness problem: a finished MP4 was produced from inputs
+that may since have changed. `RenderInputFingerprint` hashes everything that
+reaches a frame — the drawn text, template, render settings, source media
+identity and the cut list — and the render job records the hash it encoded
+from. When the two differ the studio says **Outdated** rather than *Rendered*:
+
+```
+Render
+Rendered ✓
+
+This render is out of date
+The project changed after it was made, so the video below no longer matches.
+```
+
+Deliberately excluded: the **working title** (a label for humans, never drawn)
+and **publishing metadata** (YouTube's business, not FFmpeg's). Renaming a
+project must not throw away a two-hour encode.
+
+Nothing is deleted. A Drive backup or an uploaded YouTube video represents an
+earlier revision and stays traceable; only the local output is marked as no
+longer current.
+
+## Removing sections of a recording
+
+The **Audio editing** card on the project page removes unwanted spans before
+rendering. `Cut 18 → 23` removes those five seconds — the result is `0–18`
+followed by `23–end`. It is not a trim down to that range.
+
+```
+Original          01:27:12
+Removed           00:00:06.50
+Rendered length   01:27:05.50
+```
+
+**The uploaded MP3 is never rewritten.** The cut list is stored separately and
+applied at encode time with `atrim` / `asetpts` / `concat`, so a mis-typed
+timestamp costs a re-render rather than the lecture. The cuts run before the
+loudness and waveform chain, so the drawn waveform matches what is heard, and
+both `-t` and the progress fraction follow the edited duration — a job measured
+against the original recording would report 92% and stop.
+
+Overlapping ranges are refused rather than merged: silently widening a cut
+removes audio nobody chose to remove. Touching ranges are merged, ranges are
+sorted, and removing the whole recording is refused.
+
+The request carries only validated numbers. `AudioEditService` builds the filter
+graph; no filter, expression or option ever comes from a client.
+
+Playback uses a short-lived signed link from `/media-links`, the same model as
+the rendered video — an `<audio>` element cannot attach a bearer token, and the
+recording stays on the private disk.
+
+## After a render
+
+Before starting a render, choose what happens when it succeeds:
+
+```
+After render
+[x] Back up to Google Drive
+[x] Upload to YouTube
+```
+
+The choices are **snapshotted onto the render attempt**, not the project: the
+job may sit on the queue, and editing the project afterwards must not change
+what happens when it finishes. A destination that is not connected is dropped
+when the render is queued rather than discovered by a worker twenty minutes
+later.
+
+Both run as independent jobs. A Drive or YouTube failure never turns a good
+render into a failed one, and a project that already holds a `youtube_video_id`
+is never uploaded again however often it is re-rendered.
+
+Pruning is unaffected and safe in either completion order: Drive first keeps the
+MP4 because YouTube still wants it; YouTube first prunes nothing because there
+is no backup to fall back on.
+
 ## Topics and YouTube playlists
 
 A `ContentTopic` is the lecture series. It exists so you type "Riyadhush Shalihin" once, and it carries an optional `youtube_playlist_id`:
@@ -645,7 +829,29 @@ Keje Topic                YouTube Playlist
 Riyadhush Shalihin   →    PLxxxxxxxxxxxx
 ```
 
-Linking is **never required to render**. Creating playlists from Keje is deliberately not implemented yet — you pick from the ones the channel already has.
+**YouTube playlists are the canonical topic.** A local topic and a playlist
+were always the same grouping described twice, maintained separately and mapped
+by hand. Choosing a playlist as a project's topic now resolves (or creates) its
+local shadow on the server, so there is one choice rather than two.
+
+The `ContentTopic` table stays, and is not redundant: it carries what YouTube
+has no concept of — the name drawn on the Kajian Tematik frame, the TEMA
+sequence, and the link to every historical project. Dropping it would break
+rendering and orphan finished work.
+
+Identity is the **playlist id**, never the name. Two playlists that happen to
+share a title are not the same topic, and merging them on a string match would
+silently reassign someone's projects. One exception, and only one: an unmapped
+legacy topic whose name matches exactly is adopted rather than duplicated
+beside it, which keeps its history and its projects.
+
+Legacy topics with no playlist stay selectable under **Not linked to YouTube**,
+so a historical project can still be re-attached to its own topic and mapped to
+a playlist when convenient. Nothing is deleted.
+
+`/studio/topics` redirects to `/youtube`; the route was in the main navigation
+until this sprint, so bookmarks keep working. Creating playlists from Keje is
+still deliberately not implemented — you pick from the ones the channel has.
 
 Two levels decide where a video lands, project first:
 

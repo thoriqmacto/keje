@@ -75,9 +75,17 @@ export type ContentProjectSummary = {
     audio_duration: number | null;
     has_audio: boolean;
     has_background: boolean;
-    render: { status: RenderStatus; label: string; progress: number };
+    render: { status: RenderStatus; label: string; progress: number; stale: boolean };
     drive: { status: DriveStatus; label: string };
-    youtube: { status: YouTubeStatus; label: string; scheduled_at: string | null };
+    youtube: {
+        status: YouTubeStatus;
+        label: string;
+        scheduled_at: string | null;
+        /** What YouTube says now — a scheduled video publishes itself. */
+        remote_status: string | null;
+        remote_label: string | null;
+        remote_synced_at: string | null;
+    };
     created_at: string | null;
     updated_at: string | null;
 };
@@ -96,6 +104,15 @@ export type ContentProject = {
     } | null;
     topic_sequence: number | null;
     speaker: { id: string; name: string; render_name: string } | null;
+
+    /** Removed sections, with the arithmetic already done server-side. */
+    audio_edits: {
+        cuts: { type: string; start: number; end: number }[];
+        source_duration: number | null;
+        removed_duration: number;
+        /** What the render will actually be — also what progress measures. */
+        effective_duration: number | null;
+    } | null;
 
     primary_title: string | null;
     subtitle: string | null;
@@ -129,6 +146,8 @@ export type ContentProject = {
         status: RenderStatus;
         label: string;
         progress: number;
+        /** The output was produced from inputs that have since changed. */
+        stale: boolean;
         error: string | null;
         rendered_at: string | null;
         output_size: number | null;
@@ -158,6 +177,15 @@ export type ContentProject = {
         publish_at: string | null;
         error: string | null;
         metadata: YouTubeMetadata | null;
+        /** Google's current view, kept apart from our pipeline status. */
+        remote: {
+            status: string | null;
+            label: string | null;
+            privacy_status: string | null;
+            publish_at: string | null;
+            synced_at: string | null;
+            sync_error: string | null;
+        };
     };
 
     /** Outcome of adding the uploaded video to a playlist. */
@@ -166,6 +194,16 @@ export type ContentProject = {
         item_id: string | null;
         added_at: string | null;
         error: string | null;
+    };
+
+    /** Chosen frame, and how YouTube received it. Never folded into `youtube`. */
+    thumbnail: {
+        timestamp: number | null;
+        selected: boolean;
+        generated_at: string | null;
+        youtube_status: string | null;
+        youtube_error: string | null;
+        youtube_synced_at: string | null;
     };
 
     render_settings: { loudnorm?: boolean } | null;
