@@ -9,6 +9,7 @@ use App\Http\Requests\Api\V1\StoreContentProjectRequest;
 use App\Http\Requests\Api\V1\UpdateContentProjectRequest;
 use App\Http\Resources\Api\V1\ContentProjectResource;
 use App\Http\Resources\Api\V1\ContentProjectSummaryResource;
+use App\Jobs\SyncYouTubeVideoStatusJob;
 use App\Models\ContentProject;
 use App\Models\ContentTopic;
 use App\Models\Speaker;
@@ -33,6 +34,11 @@ class ContentProjectController extends Controller
             ->with(['topic', 'speaker'])
             ->orderByDesc('updated_at')
             ->get();
+
+        // Stale-while-revalidate: the list always answers from what is
+        // already stored, and anything old enough gets a background refresh.
+        // Fifty projects must never mean fifty synchronous YouTube calls.
+        $this->queueStaleYouTubeSyncs($projects);
 
         return response()->json(['data' => ContentProjectSummaryResource::collection($projects)]);
     }
@@ -138,6 +144,28 @@ class ContentProjectController extends Controller
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
+    /**
+     * Queue a refresh for videos nobody has looked at recently.
+     *
+     * Bounded on purpose: a handful per page view, oldest first. YouTube
+     * publishes scheduled videos on its own and people change privacy from
+     * the app, so the stored value drifts — but not fast enough to justify
+     * spending quota on every project every time the page loads.
+     *
+     * @param  \Illuminate\Support\Collection<int, ContentProject>  $projects
+     */
+    private function queueStaleYouTubeSyncs(\Illuminate\Support\Collection $projects): void
+    {
+        $ttl = now()->subMinutes((int) config('services.youtube.remote_sync_ttl_minutes'));
+
+        $projects
+            ->filter(fn (ContentProject $p): bool => filled($p->youtube_video_id)
+                && ($p->youtube_remote_synced_at === null || $p->youtube_remote_synced_at->lt($ttl)))
+            ->sortBy(fn (ContentProject $p) => $p->youtube_remote_synced_at?->timestamp ?? 0)
+            ->take((int) config('services.youtube.remote_sync_batch'))
+            ->each(fn (ContentProject $p) => SyncYouTubeVideoStatusJob::dispatch($p->id));
+    }
+
     private function resolveRelations(Request $request, array $data): array
     {
         $out = [];

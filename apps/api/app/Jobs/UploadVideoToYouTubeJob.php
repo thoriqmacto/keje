@@ -10,6 +10,7 @@ use App\Services\Google\YouTubeService;
 use App\Services\Media\MediaRetention;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Throwable;
@@ -86,6 +87,15 @@ class UploadVideoToYouTubeJob implements ShouldQueue
                 'youtube_publish_at' => $result['publish_at'],
                 'youtube_error' => null,
             ])->save();
+
+            // A scheduled video publishes itself, and nothing tells us when.
+            // One delayed read just after the publish time is the whole
+            // mechanism: no polling loop, no scheduler to install, and the
+            // persistent worker already drains this queue.
+            if ($result['publish_at'] !== null) {
+                SyncYouTubeVideoStatusJob::dispatch($project->id)
+                    ->delay(Carbon::parse($result['publish_at'])->addMinutes(2));
+            }
 
             // Playlist membership never fails the upload — the video exists
             // and re-uploading would duplicate it — but the outcome is now

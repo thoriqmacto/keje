@@ -123,6 +123,19 @@ class ContentProjectResource extends JsonResource
                 'publish_at' => $this->youtube_publish_at?->toIso8601String(),
                 'error' => $this->youtube_error,
                 'metadata' => $this->youtube_metadata,
+                // What Google says now, kept apart from our own pipeline status:
+                // "our upload failed" and "the video is private" are different
+                // facts and must not collapse into one value.
+                'remote' => [
+                    'status' => $this->youtube_remote_status,
+                    'label' => $this->youtube_remote_status === null
+                        ? null
+                        : \App\Enums\YouTubeRemoteStatus::from($this->youtube_remote_status)->label(),
+                    'privacy_status' => $this->youtube_remote_privacy_status,
+                    'publish_at' => $this->youtube_remote_publish_at?->toIso8601String(),
+                    'synced_at' => $this->youtube_remote_synced_at?->toIso8601String(),
+                    'sync_error' => $this->youtube_remote_sync_error,
+                ],
             ],
 
             'render_settings' => $this->render_settings,

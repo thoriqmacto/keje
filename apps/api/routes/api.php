@@ -120,6 +120,9 @@ Route::prefix('v1')->group(function () {
             Route::post('/youtube', [ProjectPublicationController::class, 'youtube']);
             // Retry playlist membership only — never re-uploads the video.
             Route::post('/youtube/playlist', [ProjectPublicationController::class, 'playlist']);
+            // Read-only refresh of the remote video state. Never writes to
+            // YouTube; never re-uploads.
+            Route::post('/youtube/sync', [ProjectPublicationController::class, 'syncYouTube']);
         });
 
         // Google connection status: both services in one payload.

@@ -35,6 +35,7 @@ import {
     getPreview,
     getProject,
     startRender,
+    syncYouTubeStatus,
     studioKeys,
     updateProject,
     uploadAudio,
@@ -224,7 +225,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                     <ProjectStatusBadge
                         pipeline="youtube"
                         status={project.youtube.status}
-                        label={`YouTube: ${project.youtube.label}`}
+                        label={`YouTube: ${project.youtube.remote.label ?? project.youtube.label}`}
                     />
                 </div>
             </div>
@@ -573,6 +574,22 @@ function PublicationCard({
     onYouTube: () => Promise<void>;
     onChanged: () => void;
 }) {
+    const [syncing, setSyncing] = useState(false);
+
+    /** Read-only: never changes privacy, never re-uploads. */
+    async function onSyncYouTube() {
+        setSyncing(true);
+        try {
+            await syncYouTubeStatus(project.id);
+            onChanged();
+            toast.success("Refreshed from YouTube.");
+        } catch (error) {
+            toast.error(apiErrorMessage(error, "Could not reach YouTube."));
+        } finally {
+            setSyncing(false);
+        }
+    }
+
     const rendered = project.render.has_output;
 
     return (
@@ -657,6 +674,16 @@ function PublicationCard({
                                 ? "Retry upload"
                                 : "Upload to YouTube"}
                         </Button>
+                        {project.youtube.video_id && (
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={syncing}
+                                onClick={() => void onSyncYouTube()}
+                            >
+                                {syncing ? "Checking…" : "Refresh from YouTube"}
+                            </Button>
+                        )}
                         {project.youtube.url && (
                             <a
                                 href={project.youtube.url}
@@ -668,6 +695,33 @@ function PublicationCard({
                             </a>
                         )}
                     </div>
+
+                    {/* What Google says now, kept apart from our own pipeline
+                        status. A scheduled video publishes itself, and people
+                        change privacy from the YouTube app. */}
+                    {project.youtube.remote.label && (
+                        <dl className="grid grid-cols-[8rem_1fr] gap-y-1 text-xs">
+                            <dt className="text-muted-foreground">On YouTube</dt>
+                            <dd className="font-medium">{project.youtube.remote.label}</dd>
+
+                            {project.youtube.remote.publish_at && (
+                                <>
+                                    <dt className="text-muted-foreground">Publishes</dt>
+                                    <dd>{formatDateTime(project.youtube.remote.publish_at)}</dd>
+                                </>
+                            )}
+
+                            <dt className="text-muted-foreground">Checked</dt>
+                            <dd>{formatDateTime(project.youtube.remote.synced_at)}</dd>
+                        </dl>
+                    )}
+
+                    {project.youtube.remote.sync_error && (
+                        <p className="text-xs text-amber-700 dark:text-amber-400">
+                            Could not reach YouTube: {project.youtube.remote.sync_error} Showing the
+                            last known state.
+                        </p>
+                    )}
                     {!rendered && (
                         <p className="text-xs text-muted-foreground">
                             Render the video first.

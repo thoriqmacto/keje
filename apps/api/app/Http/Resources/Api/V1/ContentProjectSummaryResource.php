@@ -59,6 +59,14 @@ class ContentProjectSummaryResource extends JsonResource
                 'status' => $this->youtube_status->value,
                 'label' => $this->youtube_status->label(),
                 'scheduled_at' => $this->youtube_publish_at?->toIso8601String(),
+
+                // The list shows what YouTube says now, so a video that has
+                // since published stops claiming to be scheduled.
+                'remote_status' => $this->youtube_remote_status,
+                'remote_label' => $this->youtube_remote_status === null
+                    ? null
+                    : \App\Enums\YouTubeRemoteStatus::from($this->youtube_remote_status)->label(),
+                'remote_synced_at' => $this->youtube_remote_synced_at?->toIso8601String(),
             ],
 
             'created_at' => $this->created_at?->toIso8601String(),

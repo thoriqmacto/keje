@@ -326,6 +326,19 @@ export async function refreshDriveCatalog(): Promise<void> {
  * Deliberately separate from the upload endpoint: this can never publish a
  * second copy of the video.
  */
+/**
+ * Ask YouTube what it currently says about this video.
+ *
+ * Read-only. It never changes privacy and never re-uploads — if someone made
+ * a public video private from the YouTube app, that is the truth.
+ */
+export async function syncYouTubeStatus(projectId: string): Promise<ContentProject> {
+    const { data } = await api.post<{ data: ContentProject }>(
+        `/content-projects/${projectId}/youtube/sync`,
+    );
+    return data.data;
+}
+
 export async function assignYouTubePlaylist(projectId: string): Promise<ContentProject> {
     const { data } = await api.post<{ data: ContentProject }>(
         `/content-projects/${projectId}/youtube/playlist`,

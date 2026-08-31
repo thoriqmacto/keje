@@ -77,7 +77,15 @@ export type ContentProjectSummary = {
     has_background: boolean;
     render: { status: RenderStatus; label: string; progress: number; stale: boolean };
     drive: { status: DriveStatus; label: string };
-    youtube: { status: YouTubeStatus; label: string; scheduled_at: string | null };
+    youtube: {
+        status: YouTubeStatus;
+        label: string;
+        scheduled_at: string | null;
+        /** What YouTube says now — a scheduled video publishes itself. */
+        remote_status: string | null;
+        remote_label: string | null;
+        remote_synced_at: string | null;
+    };
     created_at: string | null;
     updated_at: string | null;
 };
@@ -169,6 +177,15 @@ export type ContentProject = {
         publish_at: string | null;
         error: string | null;
         metadata: YouTubeMetadata | null;
+        /** Google's current view, kept apart from our pipeline status. */
+        remote: {
+            status: string | null;
+            label: string | null;
+            privacy_status: string | null;
+            publish_at: string | null;
+            synced_at: string | null;
+            sync_error: string | null;
+        };
     };
 
     /** Outcome of adding the uploaded video to a playlist. */

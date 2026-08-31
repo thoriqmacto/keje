@@ -88,6 +88,12 @@ return [
          */
         'region_code' => env('YOUTUBE_DEFAULT_REGION_CODE', 'ID'),
         'metadata_language' => env('YOUTUBE_METADATA_LANGUAGE', 'id'),
+
+        // How long a stored remote video state is trusted before the studio
+        // list queues a background refresh, and how many it will queue at
+        // once. Fifty projects must never mean fifty synchronous API calls.
+        'remote_sync_ttl_minutes' => (int) env('YOUTUBE_REMOTE_SYNC_TTL_MINUTES', 30),
+        'remote_sync_batch' => (int) env('YOUTUBE_REMOTE_SYNC_BATCH', 10),
         'chunk_size' => (int) env('YOUTUBE_CHUNK_SIZE', 8 * 1024 * 1024),
         'default_category_id' => env('YOUTUBE_DEFAULT_CATEGORY_ID', '27'),
     ],

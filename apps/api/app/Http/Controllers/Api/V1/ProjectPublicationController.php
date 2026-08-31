@@ -13,6 +13,7 @@ use App\Jobs\UploadVideoToYouTubeJob;
 use App\Models\ContentProject;
 use App\Services\Google\GoogleClientFactory;
 use App\Services\Google\YouTubePlaylistAssigner;
+use App\Services\Google\YouTubeVideoSyncService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -199,5 +200,29 @@ class ProjectPublicationController extends Controller
                 'render' => ['Render the video before publishing it.'],
             ]);
         }
+    }
+
+    /**
+     * Ask YouTube what it currently says about this video.
+     *
+     * Read-only: it never changes privacy, never re-uploads, and never
+     * "corrects" YouTube to match a stale local value. If someone made a
+     * public video private from the YouTube app, that is the truth.
+     */
+    public function syncYouTube(Request $request, ContentProject $project): JsonResponse
+    {
+        abort_unless($request->user()->can('update', $project), 404);
+
+        if (blank($project->youtube_video_id)) {
+            throw ValidationException::withMessages([
+                'youtube' => ['This project has not been uploaded to YouTube yet.'],
+            ]);
+        }
+
+        app(YouTubeVideoSyncService::class)->sync($project);
+
+        return response()->json([
+            'data' => new ContentProjectResource($project->refresh()->load(['topic', 'speaker'])),
+        ]);
     }
 }

@@ -114,7 +114,14 @@ export default function StudioListClient() {
                                             <ProjectStatusBadge
                                                 pipeline="youtube"
                                                 status={project.youtube.status}
-                                                label={project.youtube.label}
+                                                // What YouTube says now wins:
+                                                // a scheduled video publishes
+                                                // itself, and the pipeline
+                                                // value was frozen at upload.
+                                                label={
+                                                    project.youtube.remote_label
+                                                    ?? project.youtube.label
+                                                }
                                             />
                                             {project.youtube.scheduled_at && (
                                                 <span className="text-[11px] text-muted-foreground">
