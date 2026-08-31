@@ -1,0 +1,20 @@
+# Daily sweep for media past its correction window.
+#
+# Daily rather than hourly on purpose: the window is measured in days, so a
+# finer schedule would spend wake-ups discovering that nothing has expired.
+# Missing a run costs disk space for a day and nothing else, which is why
+# Persistent=true is enough and no catch-up logic is needed.
+
+[Unit]
+Description=Keje — daily media retention sweep
+
+[Timer]
+OnCalendar=daily
+# Runs after a reboot if the machine was off when it was due.
+Persistent=true
+# Spread the start so a host running several timers does not wake them all at
+# midnight together.
+RandomizedDelaySec=30m
+
+[Install]
+WantedBy=timers.target
