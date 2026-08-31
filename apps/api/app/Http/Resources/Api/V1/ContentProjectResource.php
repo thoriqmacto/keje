@@ -138,6 +138,17 @@ class ContentProjectResource extends JsonResource
                 ],
             ],
 
+            // Thumbnail state is its own block: a failed thumbnail on a
+            // video that uploaded fine is not a failed upload.
+            'thumbnail' => [
+                'timestamp' => $this->thumbnail_timestamp,
+                'selected' => filled($this->thumbnail_path),
+                'generated_at' => $this->thumbnail_generated_at?->toIso8601String(),
+                'youtube_status' => $this->youtube_thumbnail_status,
+                'youtube_error' => $this->youtube_thumbnail_error,
+                'youtube_synced_at' => $this->youtube_thumbnail_synced_at?->toIso8601String(),
+            ],
+
             'render_settings' => $this->render_settings,
 
             'created_at' => $this->created_at?->toIso8601String(),

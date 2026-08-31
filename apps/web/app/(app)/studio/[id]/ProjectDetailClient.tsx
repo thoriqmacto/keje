@@ -27,6 +27,7 @@ import { YouTubeDestinationSummary } from "@/components/studio/youtube-destinati
 import { ProjectPropertiesCard } from "@/components/studio/project-properties";
 import { AudioEditorCard } from "@/components/studio/audio-editor";
 import { PostRenderOptions } from "@/components/studio/post-render-options";
+import { ThumbnailPicker } from "@/components/studio/thumbnail-picker";
 import { useDocumentTitle } from "@/lib/use-document-title";
 import {
     apiErrorMessage,
@@ -714,6 +715,17 @@ function PublicationCard({
                             <dt className="text-muted-foreground">Checked</dt>
                             <dd>{formatDateTime(project.youtube.remote.synced_at)}</dd>
                         </dl>
+                    )}
+
+                    {/* Choosing a frame is part of publishing, and only
+                        possible once there is a render to take one from. */}
+                    {rendered && (
+                        <div className="border-t pt-4">
+                            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                                Thumbnail
+                            </p>
+                            <ThumbnailPicker project={project} onChanged={onChanged} />
+                        </div>
                     )}
 
                     {project.youtube.remote.sync_error && (

@@ -196,6 +196,16 @@ export type ContentProject = {
         error: string | null;
     };
 
+    /** Chosen frame, and how YouTube received it. Never folded into `youtube`. */
+    thumbnail: {
+        timestamp: number | null;
+        selected: boolean;
+        generated_at: string | null;
+        youtube_status: string | null;
+        youtube_error: string | null;
+        youtube_synced_at: string | null;
+    };
+
     render_settings: { loudnorm?: boolean } | null;
     created_at: string | null;
     updated_at: string | null;

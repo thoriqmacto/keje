@@ -636,6 +636,37 @@ The last three are necessarily unauthenticated. The OAuth callback is reached by
 
 ---
 
+## Choosing a thumbnail
+
+Once a project has rendered, the publishing card offers frames from the video
+itself — a quarter, half and three-quarters of the way in, plus any timestamp
+you type. Never the first or last frame: a lecture opens and closes on
+near-static artwork, so a thumbnail of the title card is what the video already
+looks like in a list.
+
+Extraction is cheap. `-ss` before `-i` makes FFmpeg seek by keyframe instead of
+decoding up to the mark, and `-frames:v 1` stops immediately, so three
+candidates are three quick seeks rather than three passes over the video.
+
+**No OAuth change and no reconnect.** `thumbnails.set` is covered by the
+`youtube.upload` scope every connection already grants.
+
+Sending the thumbnail is a separate action from uploading the video, which is
+what makes **Retry thumbnail** safe: it calls `thumbnails.set` and has no path
+back to `videos.insert`, so a retry can never publish a second copy. A channel
+that is not verified for custom thumbnails gets that explanation rather than a
+raw Google error, and the failure is reported on its own:
+
+```
+Render                 Succeeded
+Drive                  Succeeded
+YouTube video          Succeeded
+YouTube thumbnail      Failed  ← the video is published and stays published
+```
+
+Thumbnails survive pruning. They are a few dozen kilobytes and are still needed
+for a retry after the MP4 has gone to Drive.
+
 ## Connected Google pages
 
 Two top-level pages browse the connected accounts:

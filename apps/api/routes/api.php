@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\V1\ProjectAudioEditController;
 use App\Http\Controllers\Api\V1\ProjectMediaController;
 use App\Http\Controllers\Api\V1\ProjectPublicationController;
 use App\Http\Controllers\Api\V1\ProjectRenderController;
+use App\Http\Controllers\Api\V1\ProjectThumbnailController;
 use App\Http\Controllers\Api\V1\SpeakerController;
 use App\Http\Controllers\Api\V1\YouTubeCatalogController;
 use Illuminate\Support\Facades\Route;
@@ -123,6 +124,14 @@ Route::prefix('v1')->group(function () {
             // Read-only refresh of the remote video state. Never writes to
             // YouTube; never re-uploads.
             Route::post('/youtube/sync', [ProjectPublicationController::class, 'syncYouTube']);
+
+            // Choosing a frame as the YouTube thumbnail. Kept apart from the
+            // upload endpoints so a thumbnail retry can never reach
+            // videos.insert and publish a second copy.
+            Route::post('/thumbnail/frames', [ProjectThumbnailController::class, 'generate']);
+            Route::post('/thumbnail/select', [ProjectThumbnailController::class, 'select']);
+            Route::post('/thumbnail/push', [ProjectThumbnailController::class, 'push']);
+            Route::get('/thumbnail', [ProjectThumbnailController::class, 'show']);
         });
 
         // Google connection status: both services in one payload.

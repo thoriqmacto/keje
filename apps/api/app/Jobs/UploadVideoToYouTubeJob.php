@@ -7,6 +7,7 @@ use App\Models\ContentProject;
 use App\Services\Google\GoogleNotConnectedException;
 use App\Services\Google\YouTubePlaylistAssigner;
 use App\Services\Google\YouTubeService;
+use App\Services\Google\YouTubeThumbnailService;
 use App\Services\Media\MediaRetention;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -87,6 +88,19 @@ class UploadVideoToYouTubeJob implements ShouldQueue
                 'youtube_publish_at' => $result['publish_at'],
                 'youtube_error' => null,
             ])->save();
+
+            // A chosen thumbnail goes up after the video, never with it. A
+            // failure here must not touch the video: it exists, and anything
+            // that reached videos.insert again would publish a second copy.
+            if (filled($project->thumbnail_path)) {
+                $outcome = app(YouTubeThumbnailService::class)->set($project->refresh());
+
+                $project->forceFill([
+                    'youtube_thumbnail_status' => $outcome['ok'] ? 'set' : 'failed',
+                    'youtube_thumbnail_error' => $outcome['error'],
+                    'youtube_thumbnail_synced_at' => now(),
+                ])->save();
+            }
 
             // A scheduled video publishes itself, and nothing tells us when.
             // One delayed read just after the publish time is the whole

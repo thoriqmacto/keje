@@ -332,6 +332,49 @@ export async function refreshDriveCatalog(): Promise<void> {
  * Read-only. It never changes privacy and never re-uploads — if someone made
  * a public video private from the YouTube app, that is the truth.
  */
+/**
+ * Extract candidate frames from the rendered video.
+ *
+ * Cheap: FFmpeg seeks by keyframe and stops after one frame, so this is a few
+ * quick seeks rather than anything resembling a transcode.
+ */
+export async function generateThumbnailFrames(
+    projectId: string,
+    timestamp?: number,
+): Promise<{ timestamp: number; url: string }[]> {
+    const { data } = await api.post<{ data: { timestamp: number; url: string }[] }>(
+        `/content-projects/${projectId}/thumbnail/frames`,
+        timestamp === undefined ? {} : { timestamp },
+    );
+    return data.data;
+}
+
+export async function selectThumbnail(projectId: string, timestamp: number): Promise<ContentProject> {
+    const { data } = await api.post<{ data: ContentProject }>(
+        `/content-projects/${projectId}/thumbnail/select`,
+        { timestamp },
+    );
+    return data.data;
+}
+
+/**
+ * Send the chosen thumbnail to YouTube.
+ *
+ * thumbnails.set only — this can never reach videos.insert, so retrying a
+ * refused thumbnail cannot publish a second copy of the video.
+ */
+export async function pushThumbnail(projectId: string): Promise<ContentProject> {
+    const { data } = await api.post<{ data: ContentProject }>(
+        `/content-projects/${projectId}/thumbnail/push`,
+    );
+    return data.data;
+}
+
+/** Same-origin proxy path, so the <img> carries the session. */
+export function thumbnailFrameUrl(projectId: string, timestamp: number): string {
+    return `/api/v1/content-projects/${projectId}/thumbnail?timestamp=${timestamp}`;
+}
+
 export async function syncYouTubeStatus(projectId: string): Promise<ContentProject> {
     const { data } = await api.post<{ data: ContentProject }>(
         `/content-projects/${projectId}/youtube/sync`,
