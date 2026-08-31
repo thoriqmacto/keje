@@ -16,6 +16,10 @@ import {
 } from "@/components/ui/card";
 import { apiErrorMessage, studioKeys } from "@/lib/studio/api";
 import { formatDateTime } from "@/lib/studio/format";
+import {
+    DriveIntegrationDetail,
+    YouTubeIntegrationDetail,
+} from "@/components/studio/integration-panels";
 import type { GoogleIntegrations, GoogleServiceKey } from "@/lib/types/studio";
 
 /** Messages for the ?youtube= / ?drive= codes the API callbacks redirect back with. */
@@ -107,9 +111,6 @@ export default function IntegrationsClient() {
         }
     }
 
-    const youtube = data?.youtube;
-    const drive = data?.drive;
-
     return (
         <section className="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-10">
             {/* Breadcrumb + section tabs; the "Settings" crumb and the Account
@@ -124,43 +125,44 @@ export default function IntegrationsClient() {
 
             {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
 
-            {youtube && (
+            {data && (
                 <IntegrationCard
                     title="YouTube"
                     description="Uploads rendered videos and schedules publication."
-                    connected={youtube.connected}
-                    configured={youtube.configured}
+                    connected={data.youtube.connected}
+                    configured={data.youtube.configured}
                     envHint="GOOGLE_YOUTUBE_CLIENT_ID, GOOGLE_YOUTUBE_CLIENT_SECRET and GOOGLE_YOUTUBE_REDIRECT_URI"
-                    connectedAt={youtube.connected_at}
+                    connectedAt={data.youtube.connected_at}
                     busy={busy !== null}
                     onConnect={() => void onConnect("youtube")}
                     onDisconnect={() => void onDisconnect("youtube")}
                 >
-                    {youtube.connected && (
+                    {data.youtube.connected && (
                         <>
-                            <dl className="grid grid-cols-[10rem_1fr] gap-y-2 text-sm">
-                                <dt className="text-muted-foreground">Channel</dt>
-                                <dd>{youtube.channel_title ?? "—"}</dd>
-                                <dt className="text-muted-foreground">Channel ID</dt>
-                                <dd className="truncate font-mono text-xs">
-                                    {youtube.channel_id ?? "—"}
-                                </dd>
-                                <dt className="text-muted-foreground">Connected</dt>
-                                <dd>{formatDateTime(youtube.connected_at)}</dd>
-                            </dl>
+                            {/* The live channel, its playlists and its recent
+                                uploads, read through Laravel. Replaces the two
+                                stored fields this card used to show. */}
+                            <YouTubeIntegrationDetail
+                                integrations={data}
+                                onReconnect={() => void onConnect("youtube")}
+                            />
+
+                            <p className="text-xs text-muted-foreground">
+                                Connected {formatDateTime(data.youtube.connected_at)}
+                            </p>
 
                             {/* A wrong channel must be loud: uploading a lecture
                                 to the wrong place is not undoable. Drive backup
                                 is unaffected by this. */}
-                            {youtube.channel_matches_expected === false && (
+                            {data.youtube.channel_matches_expected === false && (
                                 <div className="rounded-md bg-red-500/10 px-3 py-2 text-sm text-red-600 dark:text-red-400">
                                     <p className="font-medium">Unexpected YouTube channel</p>
                                     <p>
                                         This account controls{" "}
-                                        <span className="font-mono">{youtube.channel_id}</span>, but
+                                        <span className="font-mono">{data.youtube.channel_id}</span>, but
                                         uploads are configured for{" "}
                                         <span className="font-mono">
-                                            {youtube.expected_channel_id}
+                                            {data.youtube.expected_channel_id}
                                         </span>
                                         . YouTube uploads are blocked until you reconnect with the
                                         correct account. Google Drive backup still works.
@@ -168,13 +170,13 @@ export default function IntegrationsClient() {
                                 </div>
                             )}
 
-                            {youtube.channel_matches_expected === true && (
+                            {data.youtube.channel_matches_expected === true && (
                                 <p className="rounded-md bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-400">
                                     Channel verified against the configured channel ID.
                                 </p>
                             )}
 
-                            {youtube.channel_matches_expected === null && (
+                            {data.youtube.channel_matches_expected === null && (
                                 <p className="text-xs text-muted-foreground">
                                     No expected channel is configured, or the channel could not be
                                     read. Set{" "}
@@ -194,23 +196,26 @@ export default function IntegrationsClient() {
                 </IntegrationCard>
             )}
 
-            {drive && (
+            {data && (
                 <IntegrationCard
                     title="Google Drive"
                     description="Backs up rendered MP4 files to Google Drive."
-                    connected={drive.connected}
-                    configured={drive.configured}
+                    connected={data.drive.connected}
+                    configured={data.drive.configured}
                     envHint="GOOGLE_DRIVE_CLIENT_ID, GOOGLE_DRIVE_CLIENT_SECRET and GOOGLE_DRIVE_REDIRECT_URI"
-                    connectedAt={drive.connected_at}
+                    connectedAt={data.drive.connected_at}
                     busy={busy !== null}
                     onConnect={() => void onConnect("drive")}
                     onDisconnect={() => void onDisconnect("drive")}
                 >
-                    {drive.connected && (
-                        <dl className="grid grid-cols-[10rem_1fr] gap-y-2 text-sm">
-                            <dt className="text-muted-foreground">Connected</dt>
-                            <dd>{formatDateTime(drive.connected_at)}</dd>
-                        </dl>
+                    {data.drive.connected && (
+                        <>
+                            <DriveIntegrationDetail integrations={data} />
+
+                            <p className="text-xs text-muted-foreground">
+                                Connected {formatDateTime(data.drive.connected_at)}
+                            </p>
+                        </>
                     )}
 
                     <p className="text-xs text-muted-foreground">

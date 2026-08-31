@@ -12,6 +12,7 @@ use App\Jobs\UploadVideoToGoogleDriveJob;
 use App\Jobs\UploadVideoToYouTubeJob;
 use App\Models\ContentProject;
 use App\Services\Google\GoogleClientFactory;
+use App\Services\Google\YouTubePlaylistAssigner;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -123,6 +124,51 @@ class ProjectPublicationController extends Controller
             'message' => 'YouTube upload queued.',
             'data' => new ContentProjectResource($project->fresh(['topic', 'speaker'])),
         ], 202);
+    }
+
+    /**
+     * Add an already-uploaded video to its playlist, without re-uploading.
+     *
+     * The whole point of a separate endpoint: retrying a failed playlist
+     * assignment must never reach videos.insert, because that would publish a
+     * second copy of the lecture. This needs an existing youtube_video_id and
+     * only ever calls playlistItems.insert.
+     */
+    public function playlist(Request $request, ContentProject $project, YouTubePlaylistAssigner $playlists): JsonResponse
+    {
+        abort_unless($request->user()->can('update', $project), 404);
+
+        $this->assertConnected(GoogleService::YouTube);
+
+        if (blank($project->youtube_video_id)) {
+            throw ValidationException::withMessages([
+                'youtube' => ['Upload the video to YouTube before assigning it to a playlist.'],
+            ]);
+        }
+
+        $connection = $request->user()->googleConnectionFor(GoogleService::YouTube);
+
+        if (! ($connection?->capabilities()['manage_playlists'] ?? false)) {
+            throw ValidationException::withMessages([
+                'youtube' => ['Reconnect YouTube to grant playlist management.'],
+            ]);
+        }
+
+        if ($playlists->resolve($project) === null) {
+            throw ValidationException::withMessages([
+                'playlist' => ['Choose a playlist on this project, or link one to its topic.'],
+            ]);
+        }
+
+        $assigned = $playlists->assign($project);
+        $project->refresh();
+
+        return response()->json([
+            'message' => $assigned
+                ? 'Added to the playlist.'
+                : ($project->youtube_playlist_error ?? 'Could not add the video to the playlist.'),
+            'data' => new ContentProjectResource($project->fresh(['topic', 'speaker'])),
+        ], $assigned ? 200 : 422);
     }
 
     /**

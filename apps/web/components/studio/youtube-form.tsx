@@ -4,6 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { isoToLocalInput } from "@/lib/studio/format";
+import {
+    YouTubeCategorySelector,
+    YouTubeLanguageSelector,
+    YouTubePlaylistSelector,
+} from "@/components/studio/youtube-selectors";
 import type { PrivacyStatus, YouTubeMetadata } from "@/lib/types/studio";
 
 /**
@@ -19,12 +24,15 @@ export function YouTubeMetadataForm({
     onChange,
     onSave,
     onPrefill,
+    topicPlaylistTitle,
 }: {
     metadata: YouTubeMetadata;
     saving: boolean;
     onChange: (patch: Partial<YouTubeMetadata>) => void;
     onSave: () => void;
     onPrefill: () => void;
+    /** Named so the "no override" option can say what it falls back to. */
+    topicPlaylistTitle?: string | null;
 }) {
     const privacy = metadata.privacy_status ?? "private";
 
@@ -81,16 +89,14 @@ export function YouTubeMetadataForm({
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
-                <div className="flex flex-col gap-2">
-                    <Label htmlFor="yt_category">Category ID</Label>
-                    <Input
-                        id="yt_category"
-                        placeholder="27"
-                        value={metadata.category_id ?? ""}
-                        onChange={(event) => onChange({ category_id: event.target.value })}
-                    />
-                    <p className="text-xs text-muted-foreground">27 is Education.</p>
-                </div>
+                {/* Was a free-text "Category ID" box. The connected channel
+                    knows which categories are assignable in its region, so
+                    asking anyone to remember that 27 means Education was
+                    always avoidable. The stored value is still the id. */}
+                <YouTubeCategorySelector
+                    value={metadata.category_id}
+                    onChange={(categoryId) => onChange({ category_id: categoryId })}
+                />
 
                 <div className="flex flex-col gap-2">
                     <Label htmlFor="yt_privacy">Privacy</Label>
@@ -107,6 +113,19 @@ export function YouTubeMetadataForm({
                         <option value="public">Public</option>
                     </select>
                 </div>
+            </div>
+
+            <div className="grid gap-4 sm:grid-cols-2">
+                <YouTubePlaylistSelector
+                    value={metadata.playlist_id}
+                    inheritedFrom={topicPlaylistTitle}
+                    onChange={(playlistId) => onChange({ playlist_id: playlistId })}
+                />
+
+                <YouTubeLanguageSelector
+                    value={metadata.default_language}
+                    onChange={(language) => onChange({ default_language: language })}
+                />
             </div>
 
             <div className="flex flex-col gap-2">

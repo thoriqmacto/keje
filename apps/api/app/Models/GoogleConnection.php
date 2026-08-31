@@ -56,6 +56,37 @@ class GoogleConnection extends Model
         return filled($this->refresh_token) || filled($this->access_token);
     }
 
+    /**
+     * What this specific grant permits, from the scopes Google returned.
+     *
+     * A connection made before a scope existed reports that capability as
+     * false rather than failing at the call site, so the UI can offer a
+     * reconnect for the one thing that is missing instead of implying the
+     * whole integration is broken.
+     *
+     * @return array<string, bool>
+     */
+    public function capabilities(): array
+    {
+        if (! $this->isConnected()) {
+            return array_map(static fn (): bool => false, $this->service->fullCapabilities());
+        }
+
+        return $this->service->capabilities($this->scopes ?? []);
+    }
+
+    /** True when reconnecting would grant something this connection lacks. */
+    public function needsScopeUpgrade(): bool
+    {
+        foreach ($this->service->fullCapabilities() as $capability => $available) {
+            if ($available && ! ($this->capabilities()[$capability] ?? false)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /** True when the access token is missing or within the refresh skew window. */
     public function needsRefresh(int $skewSeconds = 60): bool
     {

@@ -57,6 +57,7 @@ class ContentProject extends Model
     {
         return [
             'media_pruned_at' => 'datetime',
+            'youtube_playlist_added_at' => 'datetime',
             'render_status' => RenderStatus::class,
             'drive_status' => DriveStatus::class,
             'youtube_status' => YouTubeStatus::class,

@@ -11,7 +11,6 @@ use Google\Service\YouTube\Video;
 use Google\Service\YouTube\VideoSnippet;
 use Google\Service\YouTube\VideoStatus;
 use RuntimeException;
-use Throwable;
 
 /**
  * Uploads the rendered MP4 to YouTube via videos.insert.
@@ -158,32 +157,33 @@ class YouTubeService
     }
 
     /**
-     * Add the uploaded video to the topic's playlist, when one is linked.
+     * Add an already-uploaded video to a playlist.
      *
-     * Best-effort by design: a playlist problem must not turn a successful
-     * upload into a failure.
+     * Returns the playlistItem id, which is the proof of membership worth
+     * storing. Errors are deliberately allowed to escape: swallowing them
+     * here is what made playlist failures invisible. The caller
+     * (YouTubePlaylistAssigner) decides what each failure means — an
+     * already-present video is success, a deleted playlist is not — and it is
+     * the caller that keeps the upload itself successful either way.
+     *
+     * Requires the youtube.force-ssl scope; .upload and .readonly do not
+     * permit writing to a playlist.
      */
-    public function addToPlaylist(User $user, string $playlistId, string $videoId): bool
+    public function addToPlaylist(User $user, string $playlistId, string $videoId): string
     {
-        try {
-            $youtube = new YouTube($this->clients->forUser($user, GoogleService::YouTube));
+        $youtube = new YouTube($this->clients->forUser($user, GoogleService::YouTube));
 
-            $resource = new YouTube\PlaylistItem;
-            $snippet = new YouTube\PlaylistItemSnippet;
-            $snippet->setPlaylistId($playlistId);
+        $resource = new YouTube\PlaylistItem;
+        $snippet = new YouTube\PlaylistItemSnippet;
+        $snippet->setPlaylistId($playlistId);
 
-            $resourceId = new YouTube\ResourceId;
-            $resourceId->setKind('youtube#video');
-            $resourceId->setVideoId($videoId);
-            $snippet->setResourceId($resourceId);
-            $resource->setSnippet($snippet);
+        $resourceId = new YouTube\ResourceId;
+        $resourceId->setKind('youtube#video');
+        $resourceId->setVideoId($videoId);
+        $snippet->setResourceId($resourceId);
+        $resource->setSnippet($snippet);
 
-            $youtube->playlistItems->insert('snippet', $resource);
-
-            return true;
-        } catch (Throwable) {
-            return false;
-        }
+        return (string) $youtube->playlistItems->insert('snippet', $resource)->getId();
     }
 
     /** The YouTube title, falling back to the project's own naming. */

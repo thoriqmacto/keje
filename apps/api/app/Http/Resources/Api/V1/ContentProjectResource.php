@@ -85,6 +85,15 @@ class ContentProjectResource extends JsonResource
                 'attempts' => $this->renderJobs()->count(),
             ],
 
+            'youtube_playlist' => [
+                'id' => $this->youtube_playlist_id,
+                'item_id' => $this->youtube_playlist_item_id,
+                'added_at' => $this->youtube_playlist_added_at?->toIso8601String(),
+                // A failed assignment leaves the video uploaded; this is what
+                // makes that visible and retryable.
+                'error' => $this->youtube_playlist_error,
+            ],
+
             'drive' => [
                 'status' => $this->drive_status->value,
                 'label' => $this->drive_status->label(),

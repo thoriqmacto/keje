@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { YouTubePlaylistSelector } from "@/components/studio/youtube-selectors";
 import {
     Card,
     CardContent,
@@ -19,7 +20,7 @@ import { apiErrorMessage, createTopic, listTopics, studioKeys } from "@/lib/stud
 export default function TopicsClient() {
     const { data: topics, isLoading, mutate } = useSWR(studioKeys.topics, listTopics);
     const [name, setName] = useState("");
-    const [playlistId, setPlaylistId] = useState("");
+    const [playlistId, setPlaylistId] = useState<string | null>(null);
     const [saving, setSaving] = useState(false);
 
     async function onCreate(event: React.FormEvent) {
@@ -30,10 +31,10 @@ export default function TopicsClient() {
         try {
             await createTopic({
                 name: name.trim(),
-                youtube_playlist_id: playlistId.trim() || null,
+                youtube_playlist_id: playlistId,
             });
             setName("");
-            setPlaylistId("");
+            setPlaylistId(null);
             await mutate();
             toast.success("Topic created.");
         } catch (error) {
@@ -71,15 +72,16 @@ export default function TopicsClient() {
                                 onChange={(event) => setName(event.target.value)}
                             />
                         </div>
-                        <div className="flex flex-col gap-2">
-                            <Label htmlFor="playlist">YouTube playlist ID</Label>
-                            <Input
-                                id="playlist"
-                                placeholder="PLxxxxxxxxxxxx"
-                                value={playlistId}
-                                onChange={(event) => setPlaylistId(event.target.value)}
-                            />
-                        </div>
+                        {/* Was a raw "YouTube playlist ID" box. A topic is a
+                            series, and the connected channel already knows
+                            which playlists exist — so this picks one by name
+                            and stores the id. */}
+                        <YouTubePlaylistSelector
+                            id="playlist"
+                            label="YouTube playlist"
+                            value={playlistId}
+                            onChange={setPlaylistId}
+                        />
                         <Button type="submit" disabled={saving} className="self-start">
                             {saving ? "Saving…" : "Add topic"}
                         </Button>
@@ -106,7 +108,7 @@ export default function TopicsClient() {
                                     {topic.projects_count ?? 0} video
                                     {topic.projects_count === 1 ? "" : "s"}
                                     {topic.youtube_playlist_id
-                                        ? ` · playlist ${topic.youtube_playlist_id}`
+                                        ? " · playlist linked"
                                         : " · no playlist linked"}
                                 </CardDescription>
                             </div>

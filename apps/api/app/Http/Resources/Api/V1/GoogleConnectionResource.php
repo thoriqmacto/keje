@@ -34,6 +34,13 @@ class GoogleConnectionResource extends JsonResource
             'connected' => $this->resource?->isConnected() ?? false,
             'scopes' => $this->resource?->scopes ?? [],
             'connected_at' => $this->resource?->connected_at?->toIso8601String(),
+
+            // Derived from the scopes Google actually granted, never from the
+            // presence of configuration. A connection made before a scope was
+            // added reports that one capability false and keeps the rest.
+            'capabilities' => $this->resource?->capabilities()
+                ?? array_map(static fn (): bool => false, $this->service->fullCapabilities()),
+            'needs_scope_upgrade' => (bool) $this->resource?->needsScopeUpgrade(),
         ];
 
         if ($this->service !== GoogleService::YouTube) {

@@ -26,6 +26,7 @@ class GoogleOAuthService
 
     public function __construct(
         private readonly GoogleClientFactory $clients,
+        private readonly GoogleCatalogCache $cache,
     ) {}
 
     /** Consent URL plus the one-time state bound to this user and service. */
@@ -97,6 +98,11 @@ class GoogleOAuthService
             'connected_at' => now(),
         ])->save();
 
+        // A reconnect can change what the grant permits, and points at
+        // whichever account just consented. Anything cached under the previous
+        // grant is not safe to keep.
+        $this->cache->flush($user, $service);
+
         if ($service === GoogleService::YouTube) {
             $this->syncYouTubeChannel($user, $connection);
         }
@@ -151,6 +157,9 @@ class GoogleOAuthService
 
         // Only this service's row. The other service keeps its credentials.
         $connection->delete();
+
+        // Never serve one grant's catalog to the next connection.
+        $this->cache->flush($user, $service);
     }
 
     private function stateKey(GoogleService $service, string $state): string

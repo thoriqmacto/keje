@@ -15,6 +15,7 @@ use App\Services\Google\GoogleClientFactory;
 use App\Services\Google\GoogleDriveService;
 use App\Services\Google\GoogleNotConnectedException;
 use App\Services\Google\GoogleOAuthService;
+use App\Services\Google\YouTubePlaylistAssigner;
 use App\Services\Google\YouTubeService;
 use App\Services\Media\MediaRetention;
 use ArrayObject;
@@ -729,7 +730,7 @@ class GoogleIntegrationTest extends TestCase
             'publish_at' => null,
         ]);
 
-        (new UploadVideoToYouTubeJob($project->id))->handle($youtube, app(MediaRetention::class));
+        (new UploadVideoToYouTubeJob($project->id))->handle($youtube, app(MediaRetention::class), app(YouTubePlaylistAssigner::class));
 
         $project->refresh();
         $this->assertSame(YouTubeStatus::Uploaded, $project->youtube_status);
@@ -751,7 +752,7 @@ class GoogleIntegrationTest extends TestCase
             'publish_at' => now()->addWeek()->toIso8601String(),
         ]);
 
-        (new UploadVideoToYouTubeJob($project->id))->handle($youtube, app(MediaRetention::class));
+        (new UploadVideoToYouTubeJob($project->id))->handle($youtube, app(MediaRetention::class), app(YouTubePlaylistAssigner::class));
 
         $this->assertSame(YouTubeStatus::Scheduled, $project->refresh()->youtube_status);
     }

@@ -55,6 +55,9 @@ export type YouTubeMetadata = {
     description?: string | null;
     tags?: string[] | null;
     category_id?: string | null;
+    /** Project-level destination override; falls back to the topic's playlist. */
+    playlist_id?: string | null;
+    default_language?: string | null;
     privacy_status?: PrivacyStatus | null;
     publish_at?: string | null;
     made_for_kids?: boolean | null;
@@ -155,6 +158,14 @@ export type ContentProject = {
         publish_at: string | null;
         error: string | null;
         metadata: YouTubeMetadata | null;
+    };
+
+    /** Outcome of adding the uploaded video to a playlist. */
+    youtube_playlist: {
+        id: string | null;
+        item_id: string | null;
+        added_at: string | null;
+        error: string | null;
     };
 
     render_settings: { loudnorm?: boolean } | null;
@@ -265,7 +276,107 @@ export type YouTubeConnection = GoogleConnectionBase & {
 
 export type DriveConnection = GoogleConnectionBase & { service: "drive" };
 
-export type GoogleIntegrations = {
-    youtube: YouTubeConnection;
-    drive: DriveConnection;
+/**
+ * What a stored grant permits, derived server-side from the scopes Google
+ * returned — not from configuration. A connection made before a scope existed
+ * reports that one capability false and keeps the rest working.
+ */
+export type YouTubeCapabilities = {
+    read_channel: boolean;
+    upload_video: boolean;
+    manage_playlists: boolean;
 };
+
+export type DriveCapabilities = {
+    about: boolean;
+    backup: boolean;
+};
+
+export type GoogleIntegrations = {
+    youtube: YouTubeConnection & {
+        capabilities: YouTubeCapabilities;
+        needs_scope_upgrade: boolean;
+    };
+    drive: DriveConnection & {
+        capabilities: DriveCapabilities;
+        needs_scope_upgrade: boolean;
+    };
+};
+
+// ── Connected Google catalog ────────────────────────────────────────────────
+
+export type YouTubeChannelProfile = {
+    channel_id: string;
+    title: string | null;
+    description: string | null;
+    custom_url: string | null;
+    thumbnail_url: string | null;
+    country: string | null;
+    default_language: string | null;
+    view_count: number | null;
+    subscriber_count: number | null;
+    hidden_subscriber_count: boolean;
+    video_count: number | null;
+    uploads_playlist_id: string | null;
+    privacy_status: string | null;
+    long_uploads_status: string | null;
+};
+
+export type YouTubePlaylist = {
+    id: string;
+    title: string | null;
+    description: string | null;
+    thumbnail_url: string | null;
+    item_count: number;
+    privacy_status: string | null;
+    published_at: string | null;
+};
+
+/** Google's stable id plus its localized name. The id is what gets stored. */
+export type YouTubeVideoCategory = { id: string; title: string };
+
+export type YouTubeLanguage = { id: string; title: string };
+
+export type YouTubeRecentUpload = {
+    video_id: string;
+    title: string | null;
+    thumbnail_url: string | null;
+    published_at: string | null;
+    url: string;
+};
+
+export type DriveAbout = {
+    account: { name: string | null; email: string | null; photo_url: string | null };
+    storage: {
+        limit: number | null;
+        usage: number | null;
+        usage_in_drive: number | null;
+        usage_in_trash: number | null;
+        unlimited: boolean;
+        percent_used: number | null;
+    };
+    backup_folder: DriveBackupFolder | null;
+    backup_folder_available: boolean;
+};
+
+export type DriveBackupFolder = {
+    id: string;
+    name: string | null;
+    web_view_link: string | null;
+    created_at: string | null;
+    modified_at: string | null;
+    configured: boolean;
+};
+
+export type DriveBackupFile = {
+    id: string;
+    name: string | null;
+    mime_type: string | null;
+    size: number | null;
+    created_at: string | null;
+    modified_at: string | null;
+    web_view_link: string | null;
+};
+
+/** Google's cursor, passed through rather than faked as an offset. */
+export type Paginated<T> = { data: T[]; next_page_token: string | null };
