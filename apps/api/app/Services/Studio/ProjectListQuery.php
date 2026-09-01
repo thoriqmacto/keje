@@ -81,6 +81,26 @@ class ProjectListQuery
      */
     public function paginate(User $user, array $params): LengthAwarePaginator
     {
+        $query = $this->queryFor($user, $params);
+        $perPage = $this->perPage($params['per_page'] ?? null);
+
+        return $query->paginate(perPage: $perPage, page: max(1, (int) ($params['page'] ?? 1)));
+    }
+
+    /**
+     * The filtered, sorted query itself, without paging.
+     *
+     * For callers that operate on a whole view rather than a page of it — the
+     * bulk re-render, which has to mean every matching project and not the
+     * twenty-five that happened to be on screen. They apply their own limit;
+     * going through paginate() would clamp it to an offered page size and
+     * quietly turn "all forty" into "the first twenty-five".
+     *
+     * @param  array<string, mixed>  $params  already validated
+     * @return Builder<ContentProject>
+     */
+    public function queryFor(User $user, array $params): Builder
+    {
         $query = ContentProject::query()
             ->where('content_projects.user_id', $user->id)
             ->with(['topic', 'speaker']);
@@ -90,9 +110,7 @@ class ProjectListQuery
         $this->applyFilters($query, $user, $params);
         $this->applySort($query, $params['sort'] ?? null, $params['direction'] ?? null);
 
-        $perPage = $this->perPage($params['per_page'] ?? null);
-
-        return $query->paginate(perPage: $perPage, page: max(1, (int) ($params['page'] ?? 1)));
+        return $query;
     }
 
     /**

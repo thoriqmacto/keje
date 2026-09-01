@@ -7,6 +7,7 @@ import { ProjectStatusBadge } from "@/components/studio/status-badge";
 import { ColumnHeader } from "@/components/studio/data-table/column-header";
 import { COLUMN_LABELS } from "@/components/studio/data-table/toolbar";
 import { formatDateTime, formatDuration } from "@/lib/studio/format";
+import { scrollRegionHeight } from "@/lib/layout-metrics";
 import {
     youtubeBadgeLabel,
     youtubeBadgeStatus,
@@ -102,15 +103,33 @@ export function StudioTable({
     }
 
     return (
-        // Horizontal scroll lives on this wrapper, not the page: the toolbar
-        // and pagination must stay put while the columns move.
-        <div className="overflow-x-auto rounded-lg border">
+        /*
+         * Scroll lives on this wrapper in both axes, and the height is bounded
+         * on purpose.
+         *
+         * `overflow-x: auto` alone computes `overflow-y` to `auto` as well,
+         * which quietly made this div the sticky header's scroll container —
+         * and with the height left to the content there was nowhere for the
+         * header to stick to, so it scrolled away with the page while looking
+         * like it was pinned. Bounding the height gives it somewhere to stick,
+         * and keeps the toolbar, the "sorted by" line and the pagination in
+         * place while the rows move.
+         *
+         * It also settles the two-sticky-layer problem by construction: this
+         * region cannot pass beneath the app header, so its own header has
+         * nothing to collide with.
+         */
+        <div
+            className="overflow-auto rounded-lg border"
+            style={{ maxHeight: scrollRegionHeight(18) }}
+        >
             <table className="w-full border-collapse text-sm" style={{ tableLayout: "fixed" }}>
                 <thead>
-                    {/* Sticky so the headers survive a long page. The
-                        background is opaque on purpose — a translucent one
-                        lets rows show through as they scroll underneath. */}
-                    <tr className="sticky top-0 z-10">
+                    {/* Sticky against the wrapper above, which is what
+                        finally gives this somewhere to stick. The background
+                        is opaque on purpose — a translucent one lets rows show
+                        through as they scroll underneath. */}
+                    <tr className="sticky top-0 z-10 bg-background">
                         {columns.map((column) => (
                             <ColumnHeader
                                 key={column}

@@ -3,20 +3,15 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Enums\GoogleService;
-use App\Enums\RenderJobStatus;
-use App\Enums\RenderStatus;
-use App\Exceptions\Media\TextDoesNotFitException;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\ContentProjectResource;
-use App\Jobs\RenderContentProjectJob;
 use App\Models\ContentProject;
 use App\Models\GoogleConnection;
-use App\Models\RenderJob;
+use App\Services\Media\RenderDispatcher;
 use App\Services\Media\RenderQueueHealth;
 use App\Services\Media\VideoRenderer;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\URL;
 use Illuminate\Validation\ValidationException;
@@ -34,6 +29,7 @@ class ProjectRenderController extends Controller
     public function __construct(
         private readonly VideoRenderer $renderer,
         private readonly RenderQueueHealth $queueHealth,
+        private readonly RenderDispatcher $dispatcher,
     ) {}
 
     /**
@@ -46,59 +42,18 @@ class ProjectRenderController extends Controller
     {
         abort_unless($request->user()->can('update', $project), 404);
 
-        if (! $project->hasRequiredMedia()) {
+        // One shared place decides what "ready to render" means; the bulk
+        // action asks the same question. Two implementations would drift, and
+        // the drift would surface as a job that fails twenty minutes later.
+        $blocker = $this->dispatcher->blocker($project->load(['topic', 'speaker']));
+
+        if ($blocker !== null) {
             throw ValidationException::withMessages([
-                'media' => ['Upload both the lecture audio and a background image before rendering.'],
+                $blocker['field'] => [$blocker['message']],
             ]);
         }
 
-        if (! $project->hasRequiredText()) {
-            throw ValidationException::withMessages([
-                'primary_title' => ['Enter a primary title before rendering.'],
-            ]);
-        }
-
-        // The columns can be set while the files are gone — a deploy that
-        // replaced storage/, or a worker on a different release. Catch it
-        // here for the same reason unfittable text is caught here: a 422 the
-        // person can act on beats a queued job that fails minutes later with
-        // nowhere obvious to look.
-        $this->assertSourcesExist($project);
-
-        $postActions = $this->postActions($request, $project);
-
-        $project->load(['topic', 'speaker']);
-
-        try {
-            $this->renderer->resolveLayout($project);
-        } catch (TextDoesNotFitException $e) {
-            throw ValidationException::withMessages([$e->element => [$e->getMessage()]]);
-        }
-
-        // Claim the render inside a transaction so two rapid clicks cannot
-        // both enqueue an attempt.
-        $renderJob = DB::transaction(function () use ($project, $postActions): ?RenderJob {
-            $fresh = ContentProject::whereKey($project->id)->lockForUpdate()->first();
-
-            if ($fresh === null || $fresh->render_status->isInFlight()) {
-                return null;
-            }
-
-            $fresh->forceFill([
-                'render_status' => RenderStatus::Queued,
-                'render_error' => null,
-            ])->save();
-
-            // Each attempt is a new row; history is never overwritten.
-            return $fresh->renderJobs()->create([
-                'status' => RenderJobStatus::Queued,
-                'progress_percent' => 0,
-                // Snapshotted with the attempt, not left on the project: the
-                // job may sit on the queue for a while, and what happens after
-                // it finishes must be what was asked for when it was queued.
-                'post_actions' => $postActions,
-            ]);
-        });
+        $renderJob = $this->dispatcher->dispatch($project, $this->postActions($request, $project));
 
         if ($renderJob === null) {
             return response()->json([
@@ -106,8 +61,6 @@ class ProjectRenderController extends Controller
                 'data' => new ContentProjectResource($project->fresh(['topic', 'speaker'])),
             ], 409);
         }
-
-        RenderContentProjectJob::dispatch($project->id, $renderJob->id);
 
         return response()->json([
             'message' => 'Render queued.',

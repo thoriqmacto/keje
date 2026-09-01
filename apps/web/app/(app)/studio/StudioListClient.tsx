@@ -110,9 +110,12 @@ export default function StudioListClient() {
                         Lecture recordings and artwork in, YouTube-ready video out.
                     </p>
                 </div>
-                <Button asChild>
-                    <Link href="/studio/new">New Content</Link>
-                </Button>
+                {/* No New Content button here any more: it lives in the app
+                    header now, where it is reachable from every page rather
+                    than only this one. Two equally prominent copies of the
+                    same action on the same screen is one too many — the empty
+                    state below still offers it, because that is the one place
+                    somebody needs pointing at it. */}
             </div>
 
             <StudioTableToolbar
