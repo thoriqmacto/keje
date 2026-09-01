@@ -2,10 +2,15 @@
 
 namespace App\Providers;
 
+use App\Models\ContentProject;
+use App\Models\ContentTopic;
+use App\Models\Speaker;
+use App\Observers\ContentProjectObserver;
 use App\Services\Media\FfmpegService;
 use App\Services\Media\FfprobeService;
 use App\Services\Media\FontMetrics;
 use App\Services\Media\TemplateRegistry;
+use App\Services\Studio\RenderStalenessCascade;
 use Illuminate\Auth\Notifications\ResetPassword;
 use Illuminate\Auth\Notifications\VerifyEmail;
 use Illuminate\Cache\RateLimiting\Limit;
@@ -61,6 +66,30 @@ class AppServiceProvider extends ServiceProvider
         $this->configureRateLimiters();
         $this->configurePasswordResetUrl();
         $this->configureEmailVerificationUrl();
+        $this->configureRenderStaleness();
+    }
+
+    /**
+     * Keep `content_projects.render_is_stale` true to the fingerprint.
+     *
+     * The flag is what lets the Studio list filter on "this video was made
+     * from a render that no longer matches its project" — a comparison
+     * against a hash computed in PHP, and therefore something SQL cannot work
+     * out for itself.
+     *
+     * Wired here rather than as one observer because it has two triggers. The
+     * project's own saves are the obvious one; the other is a topic or speaker
+     * being renamed, which changes what gets drawn on the frame and so
+     * invalidates renders belonging to projects that were never touched.
+     * Without that second half the filter would miss the most common way a
+     * render goes out of date, which is worse than not offering it.
+     */
+    private function configureRenderStaleness(): void
+    {
+        ContentProject::observe(ContentProjectObserver::class);
+
+        ContentTopic::saved(fn (ContentTopic $topic) => app(RenderStalenessCascade::class)->topicSaved($topic));
+        Speaker::saved(fn (Speaker $speaker) => app(RenderStalenessCascade::class)->speakerSaved($speaker));
     }
 
     private function configureRateLimiters(): void

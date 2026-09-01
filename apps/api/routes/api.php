@@ -90,6 +90,12 @@ Route::prefix('v1')->group(function () {
             ->only(['index', 'store', 'show', 'update'])
             ->parameters(['speakers' => 'speaker']);
 
+        // Account-wide counts for the dashboard. Its own endpoint because the
+        // list is paginated now: five numbers about every project cannot be
+        // read off one page of them. Declared before the resource so it is
+        // not swallowed by the {project} parameter.
+        Route::get('content-projects/stats', [ContentProjectController::class, 'stats']);
+
         Route::apiResource('content-projects', ContentProjectController::class)
             ->parameters(['content-projects' => 'project']);
 

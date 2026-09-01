@@ -11,37 +11,36 @@ import {
     CardTitle,
 } from "@/components/ui/card";
 import { ProjectStatusBadge } from "@/components/studio/status-badge";
-import { listProjects, studioKeys } from "@/lib/studio/api";
+import { getStudioStats, listProjects, studioKeys } from "@/lib/studio/api";
 import { formatDateTime, formatDuration } from "@/lib/studio/format";
-import type { ContentProjectSummary } from "@/lib/types/studio";
-
-/** Counts the workflow stages worth acting on, not vanity analytics. */
-function summarise(projects: ContentProjectSummary[]) {
-    return {
-        drafts: projects.filter((p) => ["draft", "media_ready"].includes(p.render.status)).length,
-        rendering: projects.filter((p) => ["queued", "rendering"].includes(p.render.status)).length,
-        readyToUpload: projects.filter(
-            (p) => p.render.status === "rendered" && p.youtube.status === "pending",
-        ).length,
-        scheduled: projects.filter((p) => p.youtube.status === "scheduled").length,
-        published: projects.filter((p) =>
-            ["published", "uploaded"].includes(p.youtube.status),
-        ).length,
-    };
-}
+import { DEFAULT_QUERY } from "@/lib/studio/table-query";
 
 export default function DashboardClient() {
-    const { data: projects, isLoading } = useSWR(studioKeys.projects, listProjects, {
+    /*
+     * Counted in SQL rather than derived here. These are facts about the whole
+     * account, and the Studio list is paginated now — counting the rows that
+     * happened to arrive would quietly report a number that shrinks as the
+     * page size does.
+     */
+    const { data: counts } = useSWR(studioKeys.stats, getStudioStats, {
         refreshInterval: 15000,
     });
 
-    const counts = projects ? summarise(projects) : null;
-    const recent = projects?.slice(0, 6) ?? [];
+    // A short "recently updated" strip, which is genuinely one page of the
+    // list and asks for exactly that many rows.
+    const recentQuery = { ...DEFAULT_QUERY, perPage: 10 as const };
+    const { data: page, isLoading } = useSWR(
+        studioKeys.projectList(recentQuery),
+        () => listProjects(recentQuery),
+        { refreshInterval: 15000 },
+    );
+
+    const recent = page?.data.slice(0, 6) ?? [];
 
     const cards: [string, number, string][] = [
         ["Drafts", counts?.drafts ?? 0, "Not yet rendered"],
         ["Rendering", counts?.rendering ?? 0, "In the queue"],
-        ["Ready to upload", counts?.readyToUpload ?? 0, "Rendered, not published"],
+        ["Ready to upload", counts?.ready_to_upload ?? 0, "Rendered, not published"],
         ["Scheduled", counts?.scheduled ?? 0, "Awaiting publish time"],
         ["Published", counts?.published ?? 0, "Live on YouTube"],
     ];

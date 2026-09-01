@@ -17,8 +17,16 @@ import type {
     YouTubePublication,
     YouTubeRecentUpload,
     YouTubeReplacement,
+    PaginatedResponse,
+    StudioStats,
     YouTubeVideoCategory,
 } from "@/lib/types/studio";
+import {
+    DEFAULT_QUERY,
+    serializeQuery,
+    toRequestParams,
+    type StudioProjectQuery,
+} from "@/lib/studio/table-query";
 
 /**
  * Content Studio data access.
@@ -37,6 +45,14 @@ export const studioKeys = {
     topic: (id: string) => `studio:topic:${id}`,
     speakers: "studio:speakers",
     google: "studio:google",
+    stats: "studio:stats",
+    /*
+     * Keyed by the serialised query, so each distinct view is cached
+     * separately. That is what lets SWR hold the previous page on screen
+     * while the next one loads instead of flashing an empty table.
+     */
+    projectList: (query: StudioProjectQuery) =>
+        `studio:projects?${serializeQuery(query).toString()}`,
     replacement: (id: string) => `studio:replacement:${id}`,
     publications: (id: string) => `studio:publications:${id}`,
 } as const;
@@ -91,11 +107,27 @@ export async function createSpeaker(input: {
 
 // ── Projects ────────────────────────────────────────────────────────────────
 
-export async function listProjects(): Promise<ContentProjectSummary[]> {
-    const { data } = await api.get<{ data: ContentProjectSummary[] }>("/content-projects");
-    return data.data;
+/**
+ * One page of the Studio list.
+ *
+ * Takes the query rather than assembling one, so filters, sorting and paging
+ * all travel through a single typed object. Ad-hoc URL building at call sites
+ * is how two screens end up disagreeing about what an omitted parameter means.
+ */
+export async function listProjects(
+    query: StudioProjectQuery = DEFAULT_QUERY,
+): Promise<PaginatedResponse<ContentProjectSummary>> {
+    const { data } = await api.get<PaginatedResponse<ContentProjectSummary>>("/content-projects", {
+        params: toRequestParams(query),
+    });
+    return data;
 }
 
+/** Account-wide counts, which a single page of the list cannot supply. */
+export async function getStudioStats(): Promise<StudioStats> {
+    const { data } = await api.get<{ data: StudioStats }>("/content-projects/stats");
+    return data.data;
+}
 export async function getProject(id: string): Promise<ContentProject> {
     const { data } = await api.get<{ data: ContentProject }>(`/content-projects/${id}`);
     return data.data;

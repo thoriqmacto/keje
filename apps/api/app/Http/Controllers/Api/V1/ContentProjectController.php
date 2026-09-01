@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Enums\RenderStatus;
 use App\Exceptions\Media\TextDoesNotFitException;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\V1\IndexContentProjectRequest;
 use App\Http\Requests\Api\V1\StoreContentProjectRequest;
 use App\Http\Requests\Api\V1\UpdateContentProjectRequest;
 use App\Http\Resources\Api\V1\ContentProjectResource;
@@ -15,6 +16,7 @@ use App\Models\ContentTopic;
 use App\Models\Speaker;
 use App\Services\Media\MediaStorage;
 use App\Services\Media\VideoRenderer;
+use App\Services\Studio\ProjectListQuery;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -27,20 +29,78 @@ class ContentProjectController extends Controller
         private readonly MediaStorage $storage,
     ) {}
 
-    public function index(Request $request): JsonResponse
+    /**
+     * One page of the Studio list.
+     *
+     * Filtering, searching, sorting and paging all happen in SQL. The list
+     * used to return every project a user owned, which works until it does
+     * not: the response grows without bound, and a browser can only ever sort
+     * the rows it was given, so "sort by title" would silently mean "sort this
+     * page by title".
+     */
+    public function index(IndexContentProjectRequest $request, ProjectListQuery $projects): JsonResponse
     {
-        $projects = ContentProject::withRenderProgress()
-            ->where('user_id', $request->user()->id)
-            ->with(['topic', 'speaker'])
-            ->orderByDesc('updated_at')
-            ->get();
+        $page = $projects->paginate($request->user(), $request->validated());
 
-        // Stale-while-revalidate: the list always answers from what is
-        // already stored, and anything old enough gets a background refresh.
-        // Fifty projects must never mean fifty synchronous YouTube calls.
-        $this->queueStaleYouTubeSyncs($projects);
+        // Stale-while-revalidate, now bounded by the page rather than by the
+        // whole account: the list answers from stored state and refreshes what
+        // is old in the background. Twenty-five rows must never mean
+        // twenty-five synchronous YouTube calls, and a thousand projects must
+        // never mean loading a thousand rows to decide which need one.
+        $this->queueStaleYouTubeSyncs(collect($page->items()));
 
-        return response()->json(['data' => ContentProjectSummaryResource::collection($projects)]);
+        return response()->json([
+            'data' => ContentProjectSummaryResource::collection($page->items()),
+            'meta' => [
+                'current_page' => $page->currentPage(),
+                'per_page' => $page->perPage(),
+                'total' => $page->total(),
+                'last_page' => $page->lastPage(),
+                'from' => $page->firstItem(),
+                'to' => $page->lastItem(),
+            ],
+        ]);
+    }
+
+    /**
+     * Counts for the dashboard, computed in SQL.
+     *
+     * Its own endpoint because the dashboard used to derive these by
+     * downloading every project and counting in JavaScript. That was already
+     * wasteful and became wrong the moment the list started paginating — five
+     * numbers about an entire account cannot be read off one page of it.
+     */
+    public function stats(Request $request): JsonResponse
+    {
+        $base = fn () => ContentProject::query()->where('user_id', $request->user()->id);
+
+        return response()->json([
+            'data' => [
+                'total' => $base()->count(),
+                'drafts' => $base()->whereIn('render_status', [
+                    RenderStatus::Draft->value,
+                    RenderStatus::MediaReady->value,
+                ])->count(),
+                'rendering' => $base()->whereIn('render_status', [
+                    RenderStatus::Queued->value,
+                    RenderStatus::Rendering->value,
+                ])->count(),
+                'ready_to_upload' => $base()
+                    ->where('render_status', RenderStatus::Rendered->value)
+                    ->where('youtube_status', \App\Enums\YouTubeStatus::Pending->value)
+                    ->count(),
+                'scheduled' => $base()
+                    ->where('youtube_status', \App\Enums\YouTubeStatus::Scheduled->value)
+                    ->count(),
+                'published' => $base()->whereIn('youtube_status', [
+                    \App\Enums\YouTubeStatus::Published->value,
+                    \App\Enums\YouTubeStatus::Uploaded->value,
+                ])->count(),
+                // Worth its own number: these are the videos whose frames no
+                // longer match the project they came from.
+                'outdated' => $base()->where('render_is_stale', true)->count(),
+            ],
+        ]);
     }
 
     public function store(StoreContentProjectRequest $request): JsonResponse

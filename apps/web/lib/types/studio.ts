@@ -522,3 +522,52 @@ export type DriveBackupFile = {
 
 /** Google's cursor, passed through rather than faked as an offset. */
 export type Paginated<T> = { data: T[]; next_page_token: string | null };
+
+// ── Paginated collections ───────────────────────────────────────────────────
+
+/**
+ * What a server-paginated list returns.
+ *
+ * `meta` is normalised on the API side rather than passing Laravel's own
+ * paginator payload through: the browser should not have to know about
+ * `prev_page_url` or parse link objects to draw a footer.
+ */
+export type PaginationMeta = {
+    current_page: number;
+    per_page: number;
+    total: number;
+    last_page: number;
+    /** 1-based index of the first row on this page; null when empty. */
+    from: number | null;
+    to: number | null;
+};
+
+/**
+ * Named apart from `Paginated`, which is Google's token-based paging.
+ *
+ * Two different models: Google hands back an opaque cursor to continue from,
+ * while Keje's own lists are offset-based with a known total — you cannot ask
+ * a cursor API for page four. Collapsing them into one name would invite a
+ * component to expect a `total` that a catalog response never has.
+ */
+export type PaginatedResponse<T> = {
+    data: T[];
+    meta: PaginationMeta;
+};
+
+/**
+ * Account-wide counts for the dashboard.
+ *
+ * Its own endpoint because the list is paginated: five numbers about every
+ * project cannot be read off one page of them.
+ */
+export type StudioStats = {
+    total: number;
+    drafts: number;
+    rendering: number;
+    ready_to_upload: number;
+    scheduled: number;
+    published: number;
+    /** Videos whose frames no longer match the project they came from. */
+    outdated: number;
+};

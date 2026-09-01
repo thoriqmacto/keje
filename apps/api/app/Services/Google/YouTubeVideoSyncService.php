@@ -116,6 +116,27 @@ class YouTubeVideoSyncService
         return $out;
     }
 
+    /**
+     * Write remote state without claiming the project was edited.
+     *
+     * `updated_at` is what the Studio list sorts by out of the box, and it is
+     * meant to mean "somebody changed this project". A background status poll
+     * is not a change to the project — it is Keje noticing something about a
+     * video that was already published — and letting it touch the timestamp
+     * made rows jump to the top of the list on their own. Worse, it moved them
+     * *between pages* while somebody was reading: a project on page three
+     * could appear on page one mid-session for no reason the user could see.
+     *
+     * So these writes are made with timestamps off. Model events still fire,
+     * so the staleness observer keeps working.
+     */
+    private function saveWithoutTouching(ContentProject $project): void
+    {
+        $project->timestamps = false;
+        $project->save();
+        $project->timestamps = true;
+    }
+
     /** @param array<string, mixed>|null $video null = not returned by the API */
     private function apply(ContentProject $project, ?array $video): void
     {
@@ -134,7 +155,8 @@ class YouTubeVideoSyncService
                 'youtube_remote_status' => YouTubeRemoteStatus::Unavailable->value,
                 'youtube_remote_synced_at' => now(),
                 'youtube_remote_sync_error' => null,
-            ])->save();
+            ]);
+            $this->saveWithoutTouching($project);
 
             return;
         }
@@ -159,7 +181,9 @@ class YouTubeVideoSyncService
             // overwrite a Failed upload with something Google said about a
             // different, older video.
             'youtube_status' => $this->pipelineStatus($project, $remote),
-        ])->save();
+        ]);
+
+        $this->saveWithoutTouching($project);
     }
 
     /**
@@ -207,7 +231,9 @@ class YouTubeVideoSyncService
                 'youtube_remote_sync_error' => $message,
                 // Deliberately not clearing youtube_remote_status: the last
                 // known state is better information than none.
-            ])->save();
+            ]);
+
+            $this->saveWithoutTouching($project);
         }
     }
 }
