@@ -53,6 +53,22 @@ export type StudioProjectQuery = {
     renderStatus: string | null;
     driveStatus: string | null;
     youtubeStatus: string | null;
+
+    /**
+     * A column filter on the title alone.
+     *
+     * Deliberately not the same thing as `search`, which also covers the
+     * topic, the speaker and the drawn titles. Somebody filtering the Working
+     * title column means that column — a match on a speaker's name would look
+     * like a bug.
+     */
+    workingTitle: string;
+
+    /** An exact TEMA number, as text so an empty box is not zero. */
+    topicSequence: string | null;
+
+    /** A relative window: "today", "7d", "30d". Absolute dates are overkill here. */
+    updatedWithin: string | null;
 };
 
 export const DEFAULT_QUERY: StudioProjectQuery = {
@@ -66,10 +82,28 @@ export const DEFAULT_QUERY: StudioProjectQuery = {
     renderStatus: null,
     driveStatus: null,
     youtubeStatus: null,
+    workingTitle: "",
+    topicSequence: null,
+    updatedWithin: null,
 };
 
+/** The relative windows the Updated column offers. */
+export const UPDATED_WINDOWS = [
+    { value: "today", label: "Today" },
+    { value: "7d", label: "Last 7 days" },
+    { value: "30d", label: "Last 30 days" },
+] as const;
+
 /** The filter keys, so "is anything filtered" is asked in one place. */
-const FILTER_KEYS = ["topic", "speaker", "renderStatus", "driveStatus", "youtubeStatus"] as const;
+const FILTER_KEYS = [
+    "topic",
+    "speaker",
+    "renderStatus",
+    "driveStatus",
+    "youtubeStatus",
+    "topicSequence",
+    "updatedWithin",
+] as const;
 
 /**
  * Read a query out of URL parameters.
@@ -99,6 +133,9 @@ export function parseQuery(params: URLSearchParams): StudioProjectQuery {
         renderStatus: params.get("render_status") || null,
         driveStatus: params.get("drive_status") || null,
         youtubeStatus: params.get("youtube_status") || null,
+        workingTitle: params.get("working_title") ?? "",
+        topicSequence: params.get("topic_sequence") || null,
+        updatedWithin: params.get("updated_within") || null,
     };
 }
 
@@ -123,6 +160,9 @@ export function serializeQuery(query: StudioProjectQuery): URLSearchParams {
     if (query.renderStatus) params.set("render_status", query.renderStatus);
     if (query.driveStatus) params.set("drive_status", query.driveStatus);
     if (query.youtubeStatus) params.set("youtube_status", query.youtubeStatus);
+    if (query.workingTitle.trim() !== "") params.set("working_title", query.workingTitle.trim());
+    if (query.topicSequence) params.set("topic_sequence", query.topicSequence);
+    if (query.updatedWithin) params.set("updated_within", query.updatedWithin);
 
     return params;
 }
@@ -148,6 +188,9 @@ export function toRequestParams(query: StudioProjectQuery): Record<string, strin
     if (query.renderStatus) params.render_status = query.renderStatus;
     if (query.driveStatus) params.drive_status = query.driveStatus;
     if (query.youtubeStatus) params.youtube_status = query.youtubeStatus;
+    if (query.workingTitle.trim() !== "") params.working_title = query.workingTitle.trim();
+    if (query.topicSequence) params.topic_sequence = query.topicSequence;
+    if (query.updatedWithin) params.updated_within = query.updatedWithin;
 
     return params;
 }
@@ -190,18 +233,25 @@ export function toggleSort(query: StudioProjectQuery, key: StudioSortKey): Studi
 
 /** Whether anything narrows the dataset — filters or search, not sorting. */
 export function hasActiveFilters(query: StudioProjectQuery): boolean {
-    return query.search.trim() !== "" || FILTER_KEYS.some((key) => query[key] !== null);
+    return (
+        query.search.trim() !== ""
+        || query.workingTitle.trim() !== ""
+        || FILTER_KEYS.some((key) => query[key] !== null)
+    );
 }
 
 /** Drop every filter and the search, keeping the sort and page size. */
 export function clearFilters(query: StudioProjectQuery): StudioProjectQuery {
     return updateQuery(query, {
         search: "",
+        workingTitle: "",
         topic: null,
         speaker: null,
         renderStatus: null,
         driveStatus: null,
         youtubeStatus: null,
+        topicSequence: null,
+        updatedWithin: null,
     });
 }
 

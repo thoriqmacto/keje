@@ -17,7 +17,11 @@ import type {
     YouTubePublication,
     YouTubeRecentUpload,
     YouTubeReplacement,
+    FinishPlan,
+    FinishResult,
     PaginatedResponse,
+    PrunePreview,
+    StorageInventory,
     StudioStats,
     YouTubeVideoCategory,
 } from "@/lib/types/studio";
@@ -46,6 +50,7 @@ export const studioKeys = {
     speakers: "studio:speakers",
     google: "studio:google",
     stats: "studio:stats",
+    storage: "studio:storage",
     /*
      * Keyed by the serialised query, so each distinct view is cached
      * separately. That is what lets SWR hold the previous page on screen
@@ -530,6 +535,54 @@ export async function listYouTubePublications(
 export async function finalizeProject(projectId: string): Promise<ContentProject> {
     const { data } = await api.post<{ data: ContentProject }>(
         `/content-projects/${projectId}/finalize`,
+    );
+    return data.data;
+}
+
+// ── Local storage housekeeping ──────────────────────────────────────────────
+//
+// No function here takes a path. The browser sends an intent and the server
+// decides which files that means — an endpoint accepting a path would be a
+// remote file manager wearing a storage page.
+
+export async function getStorageInventory(): Promise<StorageInventory> {
+    const { data } = await api.get<{ data: StorageInventory }>("/storage");
+    return data.data;
+}
+
+export async function getPrunePreview(): Promise<PrunePreview> {
+    const { data } = await api.get<{ data: PrunePreview }>("/storage/prune-preview");
+    return data.data;
+}
+
+export async function pruneStorage(): Promise<{ pruned: number; skipped: number; bytes_freed: number }> {
+    const { data } = await api.post<{ data: { pruned: number; skipped: number; bytes_freed: number } }>(
+        "/storage/prune",
+    );
+    return data.data;
+}
+
+// ── Bulk re-render ──────────────────────────────────────────────────────────
+
+/**
+ * What a bulk re-render would do, over the whole filtered view.
+ *
+ * Takes the same query the list does, so "this view" means every matching
+ * project rather than the page on screen.
+ */
+export async function getFinishPlan(query: StudioProjectQuery): Promise<FinishPlan> {
+    const { data } = await api.get<{ data: FinishPlan }>("/content-projects/finish-plan", {
+        params: toRequestParams(query),
+    });
+    return data.data;
+}
+
+/** Queue the renders. Never touches YouTube or Drive. */
+export async function finishOutdated(query: StudioProjectQuery): Promise<FinishResult> {
+    const { data } = await api.post<{ data: FinishResult }>(
+        "/content-projects/finish-all",
+        {},
+        { params: toRequestParams(query) },
     );
     return data.data;
 }

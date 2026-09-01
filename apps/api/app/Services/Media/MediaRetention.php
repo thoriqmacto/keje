@@ -158,6 +158,93 @@ class MediaRetention
         return $project->youtubeReplacements()->whereNotNull('active_key')->exists();
     }
 
+    /**
+     * Whether this project's files may go, and if not, why not.
+     *
+     * The single place that answers the question. The Storage page needs to
+     * explain a blocked project rather than just refuse it, and the obvious
+     * way to build that screen — re-deriving the rules in the inventory
+     * service, or worse in React — produces a second copy that drifts from the
+     * one that actually deletes files. When those two disagree, the UI either
+     * promises to free space it cannot, or hides files it could.
+     *
+     * So the explanation is generated from the same predicates the pruning
+     * itself uses, and every reason names something the user can act on.
+     *
+     * @return array{eligible: bool, reasons: list<array{code: string, message: string}>}
+     */
+    public function explain(ContentProject $project): array
+    {
+        $reasons = [];
+
+        if (! $this->isBackedUp($project)) {
+            // The oldest invariant here, and the only one that is really about
+            // safety rather than convenience.
+            $reasons[] = [
+                'code' => 'no_backup',
+                'message' => $project->drive_status === DriveStatus::Failed
+                    ? 'The Drive backup failed, so nothing has a second copy yet.'
+                    : 'Drive has not confirmed it holds the rendered video.',
+            ];
+        }
+
+        if ($this->hasPendingReplacement($project)) {
+            $reasons[] = [
+                'code' => 'replacement_active',
+                'message' => 'A YouTube replacement is in progress and is uploading this render.',
+            ];
+        }
+
+        if ($this->withinCorrectionWindow($project)) {
+            $days = $this->correctionDaysRemaining($project);
+
+            $reasons[] = [
+                'code' => 'correction_window',
+                'message' => $days === null
+                    ? 'Still inside its correction window.'
+                    : sprintf('Correction window has %d day%s remaining.', $days, $days === 1 ? '' : 's'),
+            ];
+        }
+
+        // Not a blocker on its own — a stale render with a backup and a closed
+        // window is prunable — but it is the case where losing the sources
+        // costs the most, so it is worth naming.
+        if ($project->render_is_stale && $this->sourcesStillNeeded($project)) {
+            $reasons[] = [
+                'code' => 'render_outdated',
+                'message' => 'The current render is outdated, so the source media is being kept to re-render from.',
+            ];
+        }
+
+        if ($reasons === [] && $this->outputStillNeeded($project)) {
+            $reasons[] = [
+                'code' => 'awaiting_youtube',
+                'message' => 'The rendered video is still needed for a YouTube upload.',
+            ];
+        }
+
+        return ['eligible' => $reasons === [], 'reasons' => $reasons];
+    }
+
+    /**
+     * Whole days left in the correction window, or null when it does not apply.
+     *
+     * Rounded up, because "0 days remaining" on a window that has not closed
+     * reads as expired.
+     */
+    public function correctionDaysRemaining(ContentProject $project): ?int
+    {
+        if (! $this->withinCorrectionWindow($project) || $project->youtube_uploaded_at === null) {
+            return null;
+        }
+
+        $closesAt = $project->youtube_uploaded_at
+            ->copy()
+            ->addDays((int) config('media.retention.correction_window_days'));
+
+        return max(0, (int) ceil(now()->diffInDays($closesAt, absolute: false)));
+    }
+
     private function shouldPruneSources(): bool
     {
         return (bool) config('media.retention.prune_sources_after_backup');

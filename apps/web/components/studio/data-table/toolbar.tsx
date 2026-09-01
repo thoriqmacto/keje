@@ -21,6 +21,7 @@ import {
     type Density,
     type TablePreferences,
 } from "@/lib/studio/table-preferences";
+import { viewMatchesQuery, type SavedView } from "@/lib/studio/saved-view";
 import {
     clearFilters,
     hasActiveFilters,
@@ -29,7 +30,14 @@ import {
 } from "@/lib/studio/table-query";
 
 /** The filter options, kept beside the toolbar that draws them. */
-const RENDER_OPTIONS: [string, string][] = [
+/*
+ * Shared with the per-column header filters, deliberately. The toolbar and the
+ * header are two surfaces onto one query, and two lists of status options
+ * would eventually offer different ones — the header would gain "Outdated"
+ * and the toolbar would not, or a status added to the enum would appear in
+ * one place only.
+ */
+export const RENDER_OPTIONS: [string, string][] = [
     ["draft", "Draft"],
     ["media_ready", "Media ready"],
     ["queued", "Queued"],
@@ -41,14 +49,14 @@ const RENDER_OPTIONS: [string, string][] = [
     ["failed", "Failed"],
 ];
 
-const DRIVE_OPTIONS: [string, string][] = [
+export const DRIVE_OPTIONS: [string, string][] = [
     ["pending", "Pending"],
     ["uploading", "Uploading"],
     ["uploaded", "Uploaded"],
     ["failed", "Failed"],
 ];
 
-const YOUTUBE_OPTIONS: [string, string][] = [
+export const YOUTUBE_OPTIONS: [string, string][] = [
     ["pending", "Not uploaded"],
     ["uploading", "Uploading"],
     ["scheduled", "Scheduled"],
@@ -83,6 +91,10 @@ export function StudioTableToolbar({
     onToggleColumn,
     onDensityChange,
     onResetLayout,
+    savedView,
+    onSaveView,
+    onRestoreView,
+    onClearSavedView,
 }: {
     query: StudioProjectQuery;
     total: number;
@@ -92,6 +104,11 @@ export function StudioTableToolbar({
     onToggleColumn: (column: ColumnId) => void;
     onDensityChange: (density: Density) => void;
     onResetLayout: () => void;
+    /** The view a plain /studio opens with, or null if none is saved. */
+    savedView: SavedView | null;
+    onSaveView: () => void;
+    onRestoreView: () => void;
+    onClearSavedView: () => void;
 }) {
     const { data: topics } = useSWR(studioKeys.topics, listTopics, { revalidateOnFocus: false });
     const { data: speakers } = useSWR(studioKeys.speakers, listSpeakers, {
@@ -160,7 +177,15 @@ export function StudioTableToolbar({
                 </p>
 
                 <div className="flex items-center gap-2">
-                    <ColumnsMenu preferences={preferences} onToggleColumn={onToggleColumn} />
+                    <ViewMenu
+                    isCurrentSaved={viewMatchesQuery(savedView, query)}
+                    hasSavedView={savedView !== null}
+                    onSave={onSaveView}
+                    onRestore={onRestoreView}
+                    onClear={onClearSavedView}
+                />
+
+                <ColumnsMenu preferences={preferences} onToggleColumn={onToggleColumn} />
                     <DensityMenu
                         density={preferences.density}
                         onDensityChange={onDensityChange}
@@ -435,5 +460,69 @@ function ActiveFilters({
                 Clear all
             </Button>
         </div>
+    );
+}
+
+/**
+ * The saved default view: save, restore, forget.
+ *
+ * Three separate actions rather than one toggle, because they mean three
+ * different things and combining them is how people lose a view they meant to
+ * keep. "Reset layout" lives in its own menu for the same reason: filters and
+ * columns are different concerns and a single "reset" that did both would
+ * surprise somebody every time.
+ */
+function ViewMenu({
+    isCurrentSaved,
+    hasSavedView,
+    onSave,
+    onRestore,
+    onClear,
+}: {
+    isCurrentSaved: boolean;
+    hasSavedView: boolean;
+    onSave: () => void;
+    onRestore: () => void;
+    onClear: () => void;
+}) {
+    return (
+        <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" className="h-9">
+                    View
+                    {/* A dot rather than a word: the menu says the rest, and
+                        the toolbar is already busy. */}
+                    {hasSavedView && <span aria-hidden className="ml-1 text-primary">●</span>}
+                </Button>
+            </DropdownMenuTrigger>
+
+            <DropdownMenuContent align="end" className="w-64">
+                <DropdownMenuLabel>Default Studio view</DropdownMenuLabel>
+                <DropdownMenuSeparator />
+
+                <DropdownMenuItem
+                    disabled={isCurrentSaved}
+                    onSelect={onSave}
+                >
+                    {isCurrentSaved
+                        ? "Current view is your default"
+                        : "Save current view as default"}
+                </DropdownMenuItem>
+
+                <DropdownMenuItem disabled={!hasSavedView} onSelect={onRestore}>
+                    Restore my default view
+                </DropdownMenuItem>
+
+                <DropdownMenuItem disabled={!hasSavedView} onSelect={onClear}>
+                    Forget my default view
+                </DropdownMenuItem>
+
+                <DropdownMenuSeparator />
+                <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                    Applies when you open Studio without filters in the link. A shared
+                    link always shows what it says.
+                </p>
+            </DropdownMenuContent>
+        </DropdownMenu>
     );
 }

@@ -4,6 +4,7 @@ use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\ContentProjectController;
 use App\Http\Controllers\Api\V1\ContentTopicController;
 use App\Http\Controllers\Api\V1\DriveCatalogController;
+use App\Http\Controllers\Api\V1\FinishOutdatedController;
 use App\Http\Controllers\Api\V1\GoogleIntegrationController;
 use App\Http\Controllers\Api\V1\ProjectAudioEditController;
 use App\Http\Controllers\Api\V1\ProjectMediaController;
@@ -13,6 +14,7 @@ use App\Http\Controllers\Api\V1\ProjectThumbnailController;
 use App\Http\Controllers\Api\V1\ProjectYouTubeMetadataController;
 use App\Http\Controllers\Api\V1\ProjectYouTubeReplacementController;
 use App\Http\Controllers\Api\V1\SpeakerController;
+use App\Http\Controllers\Api\V1\StorageController;
 use App\Http\Controllers\Api\V1\YouTubeCatalogController;
 use Illuminate\Support\Facades\Route;
 
@@ -96,6 +98,18 @@ Route::prefix('v1')->group(function () {
         // not swallowed by the {project} parameter.
         Route::get('content-projects/stats', [ContentProjectController::class, 'stats']);
 
+        /*
+         * Bulk re-render of the outdated projects in a Studio view. Takes the
+         * same query string the list does, so the scope is the filtered
+         * dataset rather than the page that happened to be on screen.
+         *
+         * Queues renders and nothing else — no YouTube upload, no replacement,
+         * no Drive change. Declared before the resource so neither is
+         * swallowed by the {project} parameter.
+         */
+        Route::get('content-projects/finish-plan', [FinishOutdatedController::class, 'plan']);
+        Route::post('content-projects/finish-all', [FinishOutdatedController::class, 'store']);
+
         Route::apiResource('content-projects', ContentProjectController::class)
             ->parameters(['content-projects' => 'project']);
 
@@ -175,6 +189,15 @@ Route::prefix('v1')->group(function () {
             Route::post('/thumbnail/push', [ProjectThumbnailController::class, 'push']);
             Route::get('/thumbnail', [ProjectThumbnailController::class, 'show']);
         });
+
+        /*
+         * Local disk: what Keje is keeping and the safe ways to reduce it.
+         * No endpoint here accepts a path — the browser sends an intent and
+         * the server decides which files that means.
+         */
+        Route::get('/storage', [StorageController::class, 'index']);
+        Route::get('/storage/prune-preview', [StorageController::class, 'prunePreview']);
+        Route::post('/storage/prune', [StorageController::class, 'prune']);
 
         // Google connection status: both services in one payload.
         Route::get('/integrations/google', [GoogleIntegrationController::class, 'show']);

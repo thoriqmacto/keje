@@ -571,3 +571,87 @@ export type StudioStats = {
     /** Videos whose frames no longer match the project they came from. */
     outdated: number;
 };
+
+// ── Local storage inventory ─────────────────────────────────────────────────
+
+/** Why a project's files cannot be freed. Straight from MediaRetention. */
+export type PruneBlockReason = { code: string; message: string };
+
+export type StorageProject = {
+    id: string;
+    working_title: string;
+    topic: string | null;
+    bytes: {
+        sources: number;
+        renders: number;
+        thumbnails: number;
+        text: number;
+        temp: number;
+        other: number;
+        total: number;
+    };
+    files: number;
+    last_modified: string | null;
+    render_status: string;
+    render_is_stale: boolean;
+    drive_status: string;
+    youtube_status: string;
+    media_pruned_at: string | null;
+    finalized_at: string | null;
+    correction_days_remaining: number | null;
+    prunable: boolean;
+    blocked_reasons: PruneBlockReason[];
+};
+
+/**
+ * A managed directory no project claims.
+ *
+ * Reported, never deleted automatically: an unreferenced directory is as
+ * likely to be a database problem as a disk one.
+ */
+export type StorageOrphan = {
+    id: string;
+    bytes: number;
+    files: number;
+    last_modified: string | null;
+};
+
+export type StorageInventory = {
+    totals: Record<string, number>;
+    counts: Record<string, number>;
+    projects: StorageProject[];
+    orphans: StorageOrphan[];
+};
+
+export type PrunePreview = {
+    eligible: { id: string; working_title: string; bytes: number }[];
+    skipped: { id: string; working_title: string; reasons: PruneBlockReason[] }[];
+    bytes: Record<string, number>;
+};
+
+// ── Bulk re-render ──────────────────────────────────────────────────────────
+
+export type FinishPlan = {
+    outdated: number;
+    eligible: number;
+    already_in_progress: number;
+    blocked: number;
+    blocked_reasons: Record<string, number>;
+    projects: { id: string; working_title: string; has_youtube_video: boolean }[];
+    blocked_projects: {
+        id: string;
+        working_title: string;
+        reason_code: string;
+        reason: string;
+    }[];
+    limited: boolean;
+    batch_limit: number;
+};
+
+export type FinishResult = {
+    queued: number;
+    skipped: number;
+    blocked: number;
+    queued_projects: { id: string; working_title: string }[];
+    blocked_projects: { id: string; working_title: string; reason: string }[];
+};

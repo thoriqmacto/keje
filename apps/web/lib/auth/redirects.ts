@@ -26,6 +26,7 @@ export const PROTECTED_PREFIXES = [
     "/settings",
     "/youtube",
     "/drive",
+    "/storage",
 ] as const;
 
 function stripTrailingSlash(pathname: string): string {

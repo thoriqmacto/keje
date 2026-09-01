@@ -81,6 +81,26 @@ class ProjectListQuery
      */
     public function paginate(User $user, array $params): LengthAwarePaginator
     {
+        $query = $this->queryFor($user, $params);
+        $perPage = $this->perPage($params['per_page'] ?? null);
+
+        return $query->paginate(perPage: $perPage, page: max(1, (int) ($params['page'] ?? 1)));
+    }
+
+    /**
+     * The filtered, sorted query itself, without paging.
+     *
+     * For callers that operate on a whole view rather than a page of it — the
+     * bulk re-render, which has to mean every matching project and not the
+     * twenty-five that happened to be on screen. They apply their own limit;
+     * going through paginate() would clamp it to an offered page size and
+     * quietly turn "all forty" into "the first twenty-five".
+     *
+     * @param  array<string, mixed>  $params  already validated
+     * @return Builder<ContentProject>
+     */
+    public function queryFor(User $user, array $params): Builder
+    {
         $query = ContentProject::query()
             ->where('content_projects.user_id', $user->id)
             ->with(['topic', 'speaker']);
@@ -90,9 +110,7 @@ class ProjectListQuery
         $this->applyFilters($query, $user, $params);
         $this->applySort($query, $params['sort'] ?? null, $params['direction'] ?? null);
 
-        $perPage = $this->perPage($params['per_page'] ?? null);
-
-        return $query->paginate(perPage: $perPage, page: max(1, (int) ($params['page'] ?? 1)));
+        return $query;
     }
 
     /**
@@ -240,6 +258,37 @@ class ProjectListQuery
 
         if (filled($params['youtube_status'] ?? null)) {
             $this->applyYouTubeFilter($query, (string) $params['youtube_status']);
+        }
+
+        // The Working title column's own filter. Deliberately narrower than
+        // `q`, which also covers the topic, the speaker and the drawn titles:
+        // somebody filtering a column means that column, and a match on a
+        // speaker's name would read as a bug.
+        if (filled($params['working_title'] ?? null)) {
+            $this->like(
+                $query,
+                'content_projects.working_title',
+                '%'.$this->escapeLike(trim((string) $params['working_title'])).'%',
+            );
+        }
+
+        // Exact rather than a range: a TEMA is an identifier within a series,
+        // and "between 8 and 12" is not a question anybody asks of one.
+        if (filled($params['topic_sequence'] ?? null)) {
+            $query->where('content_projects.topic_sequence', (int) $params['topic_sequence']);
+        }
+
+        if (filled($params['updated_within'] ?? null)) {
+            $since = match ($params['updated_within']) {
+                'today' => now()->startOfDay(),
+                '7d' => now()->subDays(7),
+                '30d' => now()->subDays(30),
+                default => null,
+            };
+
+            if ($since !== null) {
+                $query->where('content_projects.updated_at', '>=', $since);
+            }
         }
     }
 
