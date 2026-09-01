@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { ProjectStatusBadge } from "@/components/studio/status-badge";
 import { ColumnHeader } from "@/components/studio/data-table/column-header";
+import { HeaderFilterCell } from "@/components/studio/data-table/header-filters";
 import { COLUMN_LABELS } from "@/components/studio/data-table/toolbar";
 import { formatDateTime, formatDuration } from "@/lib/studio/format";
 import { scrollRegionHeight } from "@/lib/layout-metrics";
@@ -20,7 +21,7 @@ import {
     type TablePreferences,
 } from "@/lib/studio/table-preferences";
 import type { StudioProjectQuery, StudioSortKey } from "@/lib/studio/table-query";
-import type { ContentProjectSummary } from "@/lib/types/studio";
+import type { ContentProjectSummary, ContentTopic, Speaker } from "@/lib/types/studio";
 
 /**
  * Which server sort key a column maps to, and how its cell is aligned.
@@ -56,13 +57,20 @@ export function StudioTable({
     projects,
     query,
     preferences,
+    topics,
+    speakers,
     onSort,
+    onQueryChange,
     onPreferencesChange,
 }: {
     projects: ContentProjectSummary[];
     query: StudioProjectQuery;
     preferences: TablePreferences;
+    /** Offered by the Topic and Speaker header filters. */
+    topics: ContentTopic[];
+    speakers: Speaker[];
     onSort: (key: StudioSortKey) => void;
+    onQueryChange: (next: StudioProjectQuery) => void;
     onPreferencesChange: (next: TablePreferences) => void;
 }) {
     const [dragging, setDragging] = useState<ColumnId | null>(null);
@@ -154,6 +162,29 @@ export function StudioTable({
                                 isDropTarget={dropTarget === column && dragging !== column}
                                 pinnedClassName={pinned(column)}
                             />
+                        ))}
+                    </tr>
+
+                    {/*
+                        A second surface onto the same query the toolbar edits,
+                        not a second filter state. Sticky below the header row
+                        so both survive a long page — the offset is the header
+                        row's own height.
+                    */}
+                    <tr className="sticky top-[2.75rem] z-10 bg-background">
+                        {columns.map((column) => (
+                            <th
+                                key={column}
+                                className={`border-b px-2 pb-2 align-top ${pinned(column)}`}
+                            >
+                                <HeaderFilterCell
+                                    column={column}
+                                    query={query}
+                                    topics={topics}
+                                    speakers={speakers}
+                                    onQueryChange={onQueryChange}
+                                />
+                            </th>
                         ))}
                     </tr>
                 </thead>

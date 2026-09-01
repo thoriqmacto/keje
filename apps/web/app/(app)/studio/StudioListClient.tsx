@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { StudioTable } from "@/components/studio/data-table/studio-table";
 import { StudioTablePagination } from "@/components/studio/data-table/pagination";
 import { COLUMN_LABELS, StudioTableToolbar } from "@/components/studio/data-table/toolbar";
-import { listProjects, studioKeys } from "@/lib/studio/api";
+import { listProjects, listSpeakers, listTopics, studioKeys } from "@/lib/studio/api";
 import {
     DEFAULT_PREFERENCES,
     clearPreferences,
@@ -19,6 +19,14 @@ import {
     type Density,
     type TablePreferences,
 } from "@/lib/studio/table-preferences";
+import {
+    clearSavedView,
+    loadSavedView,
+    resolveInitialQuery,
+    saveView,
+    viewFromQuery,
+    type SavedView,
+} from "@/lib/studio/saved-view";
 import {
     clearFilters,
     describeSort,
@@ -65,9 +73,34 @@ export default function StudioListClient() {
      * that a hydration mismatch and throws the whole tree away.
      */
     const [preferences, setPreferences] = useState<TablePreferences>(DEFAULT_PREFERENCES);
+    const [savedView, setSavedView] = useState<SavedView | null>(null);
 
     useEffect(() => {
         setPreferences(loadPreferences());
+    }, []);
+
+    /*
+     * Apply a saved view, but only to a plain /studio.
+     *
+     * A URL carrying any dataset parameter wins outright — a shared link has
+     * to show what the sender saw, and the back button has to return to what
+     * was left. `replace` rather than `push` so the un-defaulted URL does not
+     * become a history entry the back button lands on and immediately
+     * redirects away from again.
+     */
+    useEffect(() => {
+        const saved = loadSavedView();
+        setSavedView(saved);
+
+        const initial = resolveInitialQuery(new URLSearchParams(window.location.search), saved);
+
+        if (initial !== null) {
+            const params = serializeQuery(initial).toString();
+            router.replace(params === "" ? pathname : `${pathname}?${params}`, { scroll: false });
+        }
+        // Once, on arrival. Re-running on every navigation would re-apply the
+        // default over whatever the user had just chosen.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const updatePreferences = useCallback((next: TablePreferences) => {
@@ -97,6 +130,14 @@ export default function StudioListClient() {
             keepPreviousData: true,
         },
     );
+
+    // The Topic and Speaker header filters offer real names rather than asking
+    // anybody to know a UUID. Cached and rarely changing, so they are fetched
+    // once rather than with every page of results.
+    const { data: topics } = useSWR(studioKeys.topics, listTopics, { revalidateOnFocus: false });
+    const { data: speakers } = useSWR(studioKeys.speakers, listSpeakers, {
+        revalidateOnFocus: false,
+    });
 
     const projects = data?.data ?? [];
     const meta = data?.meta;
@@ -137,6 +178,25 @@ export default function StudioListClient() {
                     clearPreferences();
                     setPreferences(DEFAULT_PREFERENCES);
                 }}
+                savedView={savedView}
+                onSaveView={() => {
+                    const view = viewFromQuery(query);
+                    saveView(view);
+                    setSavedView(view);
+                }}
+                onRestoreView={() => {
+                    const restored = savedView === null
+                        ? null
+                        : resolveInitialQuery(new URLSearchParams(""), savedView);
+
+                    if (restored !== null) {
+                        setQuery(restored);
+                    }
+                }}
+                onClearSavedView={() => {
+                    clearSavedView();
+                    setSavedView(null);
+                }}
             />
 
             {/* The ordering, said out loud. An arrow on one header is easy to
@@ -165,7 +225,10 @@ export default function StudioListClient() {
                         projects={projects}
                         query={query}
                         preferences={preferences}
+                        topics={topics ?? []}
+                        speakers={speakers ?? []}
                         onSort={(key: StudioSortKey) => setQuery(toggleSort(query, key))}
+                        onQueryChange={setQuery}
                         onPreferencesChange={updatePreferences}
                     />
                     {meta && (

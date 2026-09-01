@@ -64,6 +64,9 @@ export type StudioProjectQuery = {
      */
     workingTitle: string;
 
+    /** An exact TEMA number, as text so an empty box is not zero. */
+    topicSequence: string | null;
+
     /** A relative window: "today", "7d", "30d". Absolute dates are overkill here. */
     updatedWithin: string | null;
 };
@@ -80,6 +83,7 @@ export const DEFAULT_QUERY: StudioProjectQuery = {
     driveStatus: null,
     youtubeStatus: null,
     workingTitle: "",
+    topicSequence: null,
     updatedWithin: null,
 };
 
@@ -97,6 +101,7 @@ const FILTER_KEYS = [
     "renderStatus",
     "driveStatus",
     "youtubeStatus",
+    "topicSequence",
     "updatedWithin",
 ] as const;
 
@@ -129,6 +134,7 @@ export function parseQuery(params: URLSearchParams): StudioProjectQuery {
         driveStatus: params.get("drive_status") || null,
         youtubeStatus: params.get("youtube_status") || null,
         workingTitle: params.get("working_title") ?? "",
+        topicSequence: params.get("topic_sequence") || null,
         updatedWithin: params.get("updated_within") || null,
     };
 }
@@ -155,6 +161,7 @@ export function serializeQuery(query: StudioProjectQuery): URLSearchParams {
     if (query.driveStatus) params.set("drive_status", query.driveStatus);
     if (query.youtubeStatus) params.set("youtube_status", query.youtubeStatus);
     if (query.workingTitle.trim() !== "") params.set("working_title", query.workingTitle.trim());
+    if (query.topicSequence) params.set("topic_sequence", query.topicSequence);
     if (query.updatedWithin) params.set("updated_within", query.updatedWithin);
 
     return params;
@@ -182,6 +189,7 @@ export function toRequestParams(query: StudioProjectQuery): Record<string, strin
     if (query.driveStatus) params.drive_status = query.driveStatus;
     if (query.youtubeStatus) params.youtube_status = query.youtubeStatus;
     if (query.workingTitle.trim() !== "") params.working_title = query.workingTitle.trim();
+    if (query.topicSequence) params.topic_sequence = query.topicSequence;
     if (query.updatedWithin) params.updated_within = query.updatedWithin;
 
     return params;
@@ -242,6 +250,7 @@ export function clearFilters(query: StudioProjectQuery): StudioProjectQuery {
         renderStatus: null,
         driveStatus: null,
         youtubeStatus: null,
+        topicSequence: null,
         updatedWithin: null,
     });
 }

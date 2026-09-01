@@ -54,6 +54,7 @@ export type SavedView = {
     youtubeStatus: string | null;
     updatedWithin: string | null;
     workingTitle: string;
+    topicSequence: string | null;
 };
 
 /** Versioned separately from the table layout: different shape, different life. */
@@ -73,6 +74,7 @@ export function viewFromQuery(query: StudioProjectQuery): SavedView {
         youtubeStatus: query.youtubeStatus,
         updatedWithin: query.updatedWithin,
         workingTitle: query.workingTitle,
+        topicSequence: query.topicSequence,
     };
 }
 
@@ -112,6 +114,7 @@ export function normalizeSavedView(stored: unknown): SavedView | null {
         youtubeStatus: typeof raw.youtubeStatus === "string" ? raw.youtubeStatus : null,
         updatedWithin: typeof raw.updatedWithin === "string" ? raw.updatedWithin : null,
         workingTitle: typeof raw.workingTitle === "string" ? raw.workingTitle : "",
+        topicSequence: typeof raw.topicSequence === "string" ? raw.topicSequence : null,
     };
 }
 

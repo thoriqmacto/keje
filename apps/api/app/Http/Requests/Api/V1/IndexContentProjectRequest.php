@@ -44,6 +44,7 @@ class IndexContentProjectRequest extends FormRequest
             // A relative window rather than dates: "last 7 days" is what
             // somebody actually means, and it needs no calendar widget.
             'updated_within' => ['nullable', Rule::in(['today', '7d', '30d'])],
+            'topic_sequence' => ['nullable', 'integer', 'min:1', 'max:9999'],
 
             'render_status' => ['nullable', Rule::in([
                 ...array_column(RenderStatus::cases(), 'value'),

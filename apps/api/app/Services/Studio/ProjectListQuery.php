@@ -272,6 +272,12 @@ class ProjectListQuery
             );
         }
 
+        // Exact rather than a range: a TEMA is an identifier within a series,
+        // and "between 8 and 12" is not a question anybody asks of one.
+        if (filled($params['topic_sequence'] ?? null)) {
+            $query->where('content_projects.topic_sequence', (int) $params['topic_sequence']);
+        }
+
         if (filled($params['updated_within'] ?? null)) {
             $since = match ($params['updated_within']) {
                 'today' => now()->startOfDay(),
