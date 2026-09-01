@@ -39,6 +39,12 @@ class IndexContentProjectRequest extends FormRequest
             // 'none' is a filter in its own right: projects with no speaker.
             'speaker' => ['nullable', 'string', 'max:64'],
 
+            // The Working title column's own filter, distinct from `q`.
+            'working_title' => ['nullable', 'string', 'max:200'],
+            // A relative window rather than dates: "last 7 days" is what
+            // somebody actually means, and it needs no calendar widget.
+            'updated_within' => ['nullable', Rule::in(['today', '7d', '30d'])],
+
             'render_status' => ['nullable', Rule::in([
                 ...array_column(RenderStatus::cases(), 'value'),
                 // Derived, and persisted so it can be asked for in SQL.

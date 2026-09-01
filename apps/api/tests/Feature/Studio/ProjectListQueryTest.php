@@ -527,6 +527,50 @@ class ProjectListQueryTest extends TestCase
         );
     }
 
+    // ── Column filters ──────────────────────────────────────────────────────
+
+    #[Test]
+    public function the_working_title_filter_is_narrower_than_the_global_search(): void
+    {
+        $speaker = Speaker::factory()->create(['user_id' => $this->user->id, 'name' => 'Ahmad']);
+
+        $this->project(['working_title' => 'Ahmad lecture', 'primary_title' => 'A']);
+        $this->project([
+            'working_title' => 'Something else',
+            'primary_title' => 'B',
+            'speaker_id' => $speaker->id,
+        ]);
+
+        // The global search covers the speaker too, so it finds both.
+        $this->assertCount(2, $this->titles(['q' => 'Ahmad']));
+
+        // The column filter means that column. Matching a speaker's name here
+        // would read as a bug to anybody who had just typed into the Working
+        // title box.
+        $this->assertSame(['Ahmad lecture'], $this->titles(['working_title' => 'Ahmad']));
+    }
+
+    #[Test]
+    public function the_updated_window_narrows_by_recency(): void
+    {
+        $this->project(['working_title' => 'Recent'], minutesAgo: 30);
+        $this->project(['working_title' => 'Last week'], minutesAgo: 60 * 24 * 5);
+        $this->project(['working_title' => 'Ancient'], minutesAgo: 60 * 24 * 90);
+
+        $this->assertSame(['Recent'], $this->titles(['updated_within' => 'today']));
+        $this->assertSame(['Recent', 'Last week'], $this->titles(['updated_within' => '7d']));
+    }
+
+    #[Test]
+    public function an_unknown_updated_window_is_refused(): void
+    {
+        // Unlike a sort key, this one is worth rejecting: silently ignoring it
+        // would show an unfiltered list to somebody who asked for a filtered
+        // one, which looks like the filter is broken.
+        $this->getJson('/api/v1/content-projects?updated_within=last_century')
+            ->assertStatus(422);
+    }
+
     // ── Query cost ──────────────────────────────────────────────────────────
 
     #[Test]
