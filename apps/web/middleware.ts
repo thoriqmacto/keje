@@ -41,5 +41,6 @@ export const config = {
         "/settings/:path*",
         "/youtube/:path*",
         "/drive/:path*",
+        "/storage/:path*",
     ],
 };

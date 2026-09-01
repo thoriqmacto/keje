@@ -6,6 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { Button } from "@/components/ui/button";
 import { StudioTable } from "@/components/studio/data-table/studio-table";
+import { FinishAll } from "@/components/studio/finish-all";
 import { StudioTablePagination } from "@/components/studio/data-table/pagination";
 import { COLUMN_LABELS, StudioTableToolbar } from "@/components/studio/data-table/toolbar";
 import { listProjects, listSpeakers, listTopics, studioKeys } from "@/lib/studio/api";
@@ -157,6 +158,13 @@ export default function StudioListClient() {
                     same action on the same screen is one too many — the empty
                     state below still offers it, because that is the one place
                     somebody needs pointing at it. */}
+            </div>
+
+            {/* Offered beside the table's own actions rather than in the
+                toolbar's filter row: it acts on the dataset those filters
+                describe, so it belongs next to the result count. */}
+            <div className="flex flex-wrap items-start gap-2">
+                <FinishAll query={query} onFinished={() => void mutate()} />
             </div>
 
             <StudioTableToolbar

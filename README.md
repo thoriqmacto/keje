@@ -620,6 +620,13 @@ POST   /content-projects/{uuid}/youtube/replacement/cancel 202, undoes it while 
 GET    /content-projects/{uuid}/youtube/publications      every video this project has had
 POST   /content-projects/{uuid}/finalize        end the correction window, free the files
 
+GET    /content-projects/finish-plan            what a bulk re-render would do
+POST   /content-projects/finish-all             202, queues renders only — never touches YouTube
+
+GET    /storage                                 local media inventory, measured from disk
+GET    /storage/prune-preview                   what a prune would free, and what it would keep
+POST   /storage/prune                           free what MediaRetention says is safe
+
 GET    /integrations/google                    status of both connections
 POST   /integrations/youtube/redirect          YouTube consent URL
 DELETE /integrations/youtube                   disconnect YouTube only
@@ -816,6 +823,62 @@ project page forces an immediate check.
 The sync is read-only in both directions. It never sets privacy and never
 re-uploads: if a public video was made private, that is the truth to report,
 not a difference to correct.
+
+## Studio views, and keeping them
+
+The Studio table has three kinds of state, and they are deliberately separate.
+
+| | Lives in | Why |
+|---|---|---|
+| search, filters, sort, page | the **URL** | a narrowed view survives a refresh, comes back with Back, and means the same thing pasted to somebody else |
+| your default view | **browser storage** | how a plain `/studio` opens *for you* |
+| column order, widths, density | **browser storage** | personal arrangement; no use in a shared link |
+
+**An explicit URL always wins.** That is what makes a saved default safe: a shared link shows what the sender saw, and the back button returns to what you left. The saved view applies only when you open `/studio` with no dataset parameters of your own.
+
+Saving is explicit — **View → Save current view as default**. Filtering once to find a project never silently redefines how the page opens. **Restore my default view** brings it back, and **Forget my default view** returns to Keje's own (Updated, newest first).
+
+### Filtering in two places
+
+The toolbar and the row of filters under the column headers are two surfaces onto **one** query. Changing either updates the URL, the chips and the other surface — there is no second filter state to get out of step.
+
+The **Working title** column filter is narrower than the global search box: it matches that column only, while search also covers the topic, the speaker and the titles drawn on the video.
+
+---
+
+## Storage
+
+`/storage` reports what Keje is keeping on the server and offers the safe ways to reduce it.
+
+The numbers come from the **filesystem**, not from database columns. The two drift exactly when it matters — after a failed prune, or a restore that brought files back without their rows — and the disk is the side that fills up.
+
+**It is not a file browser, and cannot become one.** No endpoint accepts a path: the browser sends an intent (show the inventory, preview a prune, prune what is eligible) and the server decides which files that means. Reads are confined to the managed media root, and no absolute server path appears in a response.
+
+### Why files are or are not freed
+
+Every project says whether its media can go, and if not, why:
+
+- *Drive has not confirmed it holds the rendered video* — nothing is ever deleted without a backup.
+- *Correction window has N days remaining* — see the correction window above.
+- *A YouTube replacement is in progress* — that workflow is uploading this render.
+- *The current render is outdated* — the sources are being kept to re-render from.
+
+Those reasons come from the same code that does the deleting, so the page cannot promise space it then declines to free.
+
+**Unreferenced media** — folders no current project claims — is reported and never removed automatically. An unreferenced folder is as likely to mean a missing database row as a stray file, and deleting media to tidy a listing is the wrong way round.
+
+---
+
+## Finish all
+
+Studio → **Finish all** re-renders every project whose video was made from inputs the project no longer has.
+
+**Scope is the filtered view, not the visible page.** Filtering to a topic and pressing Finish all acts on every match across every page — a button meaning "the twenty-five rows you can see" would leave you paging through pressing it with no way to know when you were done.
+
+A plan is shown first: how many are ready, how many are already rendering, and how many are blocked with the reason for each.
+
+**It queues renders and nothing else.** Videos already on YouTube are not replaced, deleted or re-uploaded, and Drive backups are untouched. Replacing a published video costs its URL, its views and every comment, which is why that stays a confirmed, one-at-a-time action on the project page. Once a fresh render finishes, the project offers **Replace YouTube video** as usual.
+
 
 ## Correcting a video that is already on YouTube
 
