@@ -1,37 +1,108 @@
 "use client";
 
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { Button } from "@/components/ui/button";
-import { ProjectStatusBadge } from "@/components/studio/status-badge";
-import {
-    youtubeBadgeLabel,
-    youtubeBadgeStatus,
-    type YouTubeBadgeInput,
-} from "@/lib/studio/youtube-badge";
+import { StudioTable } from "@/components/studio/data-table/studio-table";
+import { StudioTablePagination } from "@/components/studio/data-table/pagination";
+import { COLUMN_LABELS, StudioTableToolbar } from "@/components/studio/data-table/toolbar";
 import { listProjects, studioKeys } from "@/lib/studio/api";
-import { formatDateTime, formatDuration } from "@/lib/studio/format";
-import type { ContentProjectSummary } from "@/lib/types/studio";
+import {
+    DEFAULT_PREFERENCES,
+    clearPreferences,
+    loadPreferences,
+    savePreferences,
+    toggleColumn,
+    type ColumnId,
+    type Density,
+    type TablePreferences,
+} from "@/lib/studio/table-preferences";
+import {
+    clearFilters,
+    describeSort,
+    hasActiveFilters,
+    parseQuery,
+    serializeQuery,
+    toggleSort,
+    type StudioProjectQuery,
+    type StudioSortKey,
+} from "@/lib/studio/table-query";
 
-/** The badge's inputs, gathered in one place so the two calls agree. */
-function badgeInput(project: ContentProjectSummary): YouTubeBadgeInput {
-    return {
-        label: project.youtube.label,
-        remoteLabel: project.youtube.remote_label,
-        isReplacing: project.youtube.is_replacing,
-        replacementFailed: project.youtube.replacement_failed,
-        hasVideo: project.youtube.status !== "pending",
-    };
-}
-
+/**
+ * The Content Studio list.
+ *
+ * Two kinds of state, kept deliberately apart:
+ *
+ *   the URL          which rows am I looking at — filters, search, sort, page.
+ *                    Survives a refresh, the back button, and being pasted to
+ *                    somebody else.
+ *
+ *   localStorage     how is my table arranged — column order, widths, which
+ *                    are hidden, density. Personal to one browser, and no use
+ *                    at all in a shared link.
+ *
+ * Nothing about the dataset is computed here. Sorting, filtering, searching and
+ * paging all happen in SQL, so what the table shows is exactly what the server
+ * decided — a browser can only sort the rows it was given, and at any real
+ * volume those are not all the rows.
+ */
 export default function StudioListClient() {
-    const { data: projects, isLoading } = useSWR(studioKeys.projects, listProjects, {
-        // Keep statuses fresh while renders are running elsewhere.
-        refreshInterval: 15000,
-    });
+    const router = useRouter();
+    const pathname = usePathname();
+    const searchParams = useSearchParams();
+
+    const query = useMemo(
+        () => parseQuery(new URLSearchParams(searchParams.toString())),
+        [searchParams],
+    );
+
+    /*
+     * Preferences load after mount rather than during render. localStorage is
+     * not available on the server, and reading it during the first client
+     * render would make that render disagree with the server's — React calls
+     * that a hydration mismatch and throws the whole tree away.
+     */
+    const [preferences, setPreferences] = useState<TablePreferences>(DEFAULT_PREFERENCES);
+
+    useEffect(() => {
+        setPreferences(loadPreferences());
+    }, []);
+
+    const updatePreferences = useCallback((next: TablePreferences) => {
+        // Applied immediately and persisted alongside: a column drag has no
+        // server round trip to wait for, and pretending otherwise would make
+        // the table feel slower than it is.
+        setPreferences(next);
+        savePreferences(next);
+    }, []);
+
+    const setQuery = useCallback(
+        (next: StudioProjectQuery) => {
+            const params = serializeQuery(next).toString();
+            router.push(params === "" ? pathname : `${pathname}?${params}`, { scroll: false });
+        },
+        [pathname, router],
+    );
+
+    const { data, error, isLoading, isValidating, mutate } = useSWR(
+        studioKeys.projectList(query),
+        () => listProjects(query),
+        {
+            // Statuses change while renders and uploads run elsewhere.
+            refreshInterval: 15000,
+            // The previous page stays on screen while the next one loads, so
+            // paging does not flash an empty table between two full ones.
+            keepPreviousData: true,
+        },
+    );
+
+    const projects = data?.data ?? [];
+    const meta = data?.meta;
 
     return (
-        <section className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-10">
+        <section className="mx-auto flex w-full max-w-[110rem] flex-col gap-6 px-4 py-10">
             <div className="flex flex-wrap items-end justify-between gap-4">
                 <div className="flex flex-col gap-1">
                     <h1 className="text-3xl font-semibold tracking-tight">Content Studio</h1>
@@ -44,125 +115,152 @@ export default function StudioListClient() {
                 </Button>
             </div>
 
-            {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
+            <StudioTableToolbar
+                query={query}
+                total={meta?.total ?? 0}
+                isValidating={isValidating && !isLoading}
+                preferences={preferences}
+                onQueryChange={setQuery}
+                onToggleColumn={(column: ColumnId) =>
+                    updatePreferences({
+                        ...preferences,
+                        hidden: toggleColumn(preferences.hidden, column),
+                    })
+                }
+                onDensityChange={(density: Density) =>
+                    updatePreferences({ ...preferences, density })
+                }
+                onResetLayout={() => {
+                    clearPreferences();
+                    setPreferences(DEFAULT_PREFERENCES);
+                }}
+            />
 
-            {!isLoading && projects && projects.length === 0 && (
-                <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed p-10">
-                    <h2 className="text-lg font-medium">No content yet</h2>
-                    <p className="text-sm text-muted-foreground">
-                        Create your first project to upload a lecture recording, add the Kajian
-                        Tematik title information and render a video.
-                    </p>
-                    <Button asChild size="sm">
-                        <Link href="/studio/new">New Content</Link>
-                    </Button>
-                </div>
-            )}
+            {/* The ordering, said out loud. An arrow on one header is easy to
+                miss, and "why is this project first" is a question the table
+                should not make anybody work out. */}
+            <p className="-mt-3 text-xs text-muted-foreground">
+                {describeSort(query, COLUMN_LABELS[sortColumn(query.sort)])}
+            </p>
 
-            {projects && projects.length > 0 && (
-                <div className="overflow-x-auto rounded-lg border">
-                    <table className="w-full min-w-[64rem] text-sm">
-                        <thead className="border-b bg-muted/40 text-left text-xs uppercase tracking-wide text-muted-foreground">
-                            <tr>
-                                <th className="px-4 py-3 font-medium">Working title</th>
-                                <th className="px-4 py-3 font-medium">Topic</th>
-                                <th className="px-4 py-3 font-medium">Tema</th>
-                                <th className="px-4 py-3 font-medium">Speaker</th>
-                                <th className="px-4 py-3 font-medium">Audio</th>
-                                <th className="px-4 py-3 font-medium">Render</th>
-                                <th className="px-4 py-3 font-medium">Drive</th>
-                                <th className="px-4 py-3 font-medium">YouTube</th>
-                                <th className="px-4 py-3 font-medium">Updated</th>
-                                <th className="px-4 py-3 font-medium sr-only">Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y">
-                            {projects.map((project) => (
-                                <tr key={project.id} className="hover:bg-muted/30">
-                                    <td className="px-4 py-3 font-medium">
-                                        <Link
-                                            href={`/studio/${project.id}`}
-                                            className="hover:underline"
-                                        >
-                                            {project.working_title}
-                                        </Link>
-                                    </td>
-                                    <td className="px-4 py-3 text-muted-foreground">
-                                        {project.topic?.name ?? "—"}
-                                    </td>
-                                    <td className="px-4 py-3 text-muted-foreground">
-                                        {project.topic_sequence != null
-                                            ? `#${project.topic_sequence}`
-                                            : "—"}
-                                    </td>
-                                    <td className="px-4 py-3 text-muted-foreground">
-                                        {project.speaker?.name ?? "—"}
-                                    </td>
-                                    <td className="px-4 py-3 font-mono text-xs text-muted-foreground">
-                                        {formatDuration(project.audio_duration)}
-                                    </td>
-                                    <td className="px-4 py-3">
-                                        <ProjectStatusBadge
-                                            pipeline="render"
-                                            status={project.render.status}
-                                            label={
-                                                project.render.status === "rendering"
-                                                    ? `${project.render.progress}%`
-                                                    // The file exists and is a
-                                                    // real render — of an
-                                                    // earlier revision. Saying
-                                                    // "Rendered" would claim it
-                                                    // still matches.
-                                                    : project.render.stale
-                                                      ? "Outdated"
-                                                      : project.render.label
-                                            }
-                                        />
-                                    </td>
-                                    <td className="px-4 py-3">
-                                        <ProjectStatusBadge
-                                            pipeline="drive"
-                                            status={project.drive.status}
-                                            label={project.drive.label}
-                                        />
-                                    </td>
-                                    <td className="px-4 py-3">
-                                        <div className="flex flex-col gap-1">
-                                            <ProjectStatusBadge
-                                                pipeline="youtube"
-                                                // A replacement mid-flight is
-                                                // the most relevant thing to
-                                                // say; otherwise what YouTube
-                                                // says now wins, because the
-                                                // pipeline value was frozen at
-                                                // upload.
-                                                status={youtubeBadgeStatus(
-                                                    badgeInput(project),
-                                                    project.youtube.status,
-                                                )}
-                                                label={youtubeBadgeLabel(badgeInput(project))}
-                                            />
-                                            {project.youtube.scheduled_at && (
-                                                <span className="text-[11px] text-muted-foreground">
-                                                    {formatDateTime(project.youtube.scheduled_at)}
-                                                </span>
-                                            )}
-                                        </div>
-                                    </td>
-                                    <td className="px-4 py-3 text-xs text-muted-foreground">
-                                        {formatDateTime(project.updated_at)}
-                                    </td>
-                                    <td className="px-4 py-3 text-right">
-                                        <Button asChild size="sm" variant="ghost">
-                                            <Link href={`/studio/${project.id}`}>Open</Link>
-                                        </Button>
-                                    </td>
-                                </tr>
-                            ))}
-                        </tbody>
-                    </table>
+            {error ? (
+                <ErrorState onRetry={() => void mutate()} />
+            ) : isLoading ? (
+                <TableSkeleton />
+            ) : projects.length === 0 ? (
+                // An empty result and an empty account need different offers:
+                // "New Content" is useless advice to somebody whose filter is
+                // simply too narrow.
+                hasActiveFilters(query) ? (
+                    <EmptyFiltered onClear={() => setQuery(clearFilters(query))} />
+                ) : (
+                    <EmptyStudio />
+                )
+            ) : (
+                <div className="flex flex-col">
+                    <StudioTable
+                        projects={projects}
+                        query={query}
+                        preferences={preferences}
+                        onSort={(key: StudioSortKey) => setQuery(toggleSort(query, key))}
+                        onPreferencesChange={updatePreferences}
+                    />
+                    {meta && (
+                        <StudioTablePagination
+                            query={query}
+                            meta={meta}
+                            onQueryChange={setQuery}
+                        />
+                    )}
                 </div>
             )}
         </section>
+    );
+}
+
+/** The column a sort key belongs to, for the "sorted by" line. */
+function sortColumn(sort: StudioSortKey): ColumnId {
+    switch (sort) {
+        case "render_status":
+            return "render";
+        case "drive_status":
+            return "drive";
+        case "youtube_status":
+            return "youtube";
+        default:
+            return sort as ColumnId;
+    }
+}
+
+/**
+ * A shaped placeholder rather than the word "Loading".
+ *
+ * Only for the first load. Every later fetch keeps the previous page on
+ * screen, because replacing a full table with a skeleton on every sort makes
+ * the page flash and reads as slower than it is.
+ */
+function TableSkeleton() {
+    return (
+        <div className="overflow-hidden rounded-lg border" aria-busy="true" aria-live="polite">
+            <span className="sr-only">Loading projects…</span>
+            {Array.from({ length: 8 }).map((_, row) => (
+                <div key={row} className="flex gap-4 border-b px-3 py-3 last:border-0">
+                    {[280, 160, 80, 140, 120, 120].map((width, cell) => (
+                        <div
+                            key={cell}
+                            style={{ width }}
+                            className="h-4 animate-pulse rounded bg-muted"
+                        />
+                    ))}
+                </div>
+            ))}
+        </div>
+    );
+}
+
+/**
+ * A failed request is not an empty table.
+ *
+ * Showing "no projects" for a network error is the wrong answer to the wrong
+ * question, and it invites somebody to go looking for content that never went
+ * anywhere. The filters stay in the URL, so retrying resumes the same view.
+ */
+function ErrorState({ onRetry }: { onRetry: () => void }) {
+    return (
+        <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed p-10">
+            <h2 className="text-lg font-medium">Could not load Studio projects.</h2>
+            <p className="text-sm text-muted-foreground">
+                Your filters are still applied — retrying will load the same view.
+            </p>
+            <Button size="sm" variant="outline" onClick={onRetry}>
+                Retry
+            </Button>
+        </div>
+    );
+}
+
+function EmptyFiltered({ onClear }: { onClear: () => void }) {
+    return (
+        <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed p-10">
+            <h2 className="text-lg font-medium">No projects match these filters.</h2>
+            <Button size="sm" variant="outline" onClick={onClear}>
+                Clear filters
+            </Button>
+        </div>
+    );
+}
+
+function EmptyStudio() {
+    return (
+        <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed p-10">
+            <h2 className="text-lg font-medium">No content yet</h2>
+            <p className="text-sm text-muted-foreground">
+                Create your first project to upload a lecture recording, add the Kajian Tematik
+                title information and render a video.
+            </p>
+            <Button asChild size="sm">
+                <Link href="/studio/new">New Content</Link>
+            </Button>
+        </div>
     );
 }
