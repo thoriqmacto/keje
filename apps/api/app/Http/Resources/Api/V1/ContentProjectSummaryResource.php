@@ -49,7 +49,12 @@ class ContentProjectSummaryResource extends JsonResource
                 // changed, so it no longer represents this project. Not an
                 // error and not a reason to delete anything — the file is
                 // still a real render of an earlier revision.
-                'stale' => app(\App\Services\Media\RenderInputFingerprint::class)->isStale($this->resource),
+                //
+                // Persisted rather than recomputed here: a hash comparison per
+                // row is cheap, but it cannot be asked for in SQL, and
+                // "which of my videos need re-rendering" is exactly the
+                // question this list should be able to answer.
+                'stale' => (bool) $this->render_is_stale,
             ],
             'drive' => [
                 'status' => $this->drive_status->value,
@@ -70,48 +75,23 @@ class ContentProjectSummaryResource extends JsonResource
 
                 /*
                  * A correction in flight, so the list can say "Replacing…"
-                 * rather than something alarming and untrue.
+                 * rather than something alarming and untrue. The distinction
+                 * that matters is `replacement_failed` with the video still
+                 * published: the workflow broke, but the lecture is up and
+                 * unchanged, and showing that as "Failed" would send someone
+                 * to check a video that is perfectly fine.
                  *
-                 * The distinction that matters here is `replacement_failed`
-                 * with the video still published: the workflow broke, but the
-                 * lecture is up and unchanged. Showing that as "Failed" would
-                 * send someone to check a video that is perfectly fine.
+                 * Read from a subquery the list adds, not from a relation.
+                 * Asking each project for its active replacement is one query
+                 * per row — twenty-five extra statements on a default page.
                  */
-                'is_replacing' => $this->replacementState()['active'],
-                'replacement_failed' => $this->replacementState()['failed'],
+                'is_replacing' => $this->active_replacement_status !== null,
+                'replacement_failed' => $this->active_replacement_status
+                    === \App\Enums\ReplacementStatus::Failed->value,
             ],
 
             'created_at' => $this->created_at?->toIso8601String(),
             'updated_at' => $this->updated_at?->toIso8601String(),
         ];
-    }
-
-    /** @var array{active: bool, failed: bool}|null */
-    private ?array $replacementState = null;
-
-    /**
-     * Replacement state for the list, in one query per project.
-     *
-     * Memoised on the instance because the two fields above would otherwise
-     * each hit the database, doubling the query count of a page that lists
-     * every project. Instance-scoped rather than static: a resource is created
-     * per item, so this is naturally per-project, and a static would outlive
-     * the request under a persistent worker and start answering for the wrong
-     * one.
-     *
-     * @return array{active: bool, failed: bool}
-     */
-    private function replacementState(): array
-    {
-        if ($this->replacementState === null) {
-            $replacement = $this->activeYouTubeReplacement();
-
-            $this->replacementState = [
-                'active' => $replacement !== null,
-                'failed' => $replacement?->status === \App\Enums\ReplacementStatus::Failed,
-            ];
-        }
-
-        return $this->replacementState;
     }
 }

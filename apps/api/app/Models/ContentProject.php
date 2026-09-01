@@ -75,6 +75,9 @@ class ContentProject extends Model
             'youtube_uploaded_at' => 'datetime',
             'youtube_publish_at' => 'datetime',
             'finalized_at' => 'datetime',
+            // Derived from the render fingerprint and persisted so the Studio
+            // list can filter on it; see ContentProjectObserver.
+            'render_is_stale' => 'boolean',
         ];
     }
 
