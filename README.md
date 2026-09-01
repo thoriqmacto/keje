@@ -573,7 +573,7 @@ That same endpoint is the pre-render check — text that cannot be laid out come
 | Route | Purpose |
 |---|---|
 | `/dashboard` | Drafts / Rendering / Ready to upload / Scheduled / Published, plus recent projects |
-| `/studio` | All content projects with per-pipeline status |
+| `/studio` | The content table: search, filters, sortable columns, pagination |
 | `/studio/new` | Create a project: topic, sequence, speaker |
 | `/studio/[uuid]` | Media upload, title fields, YouTube metadata, preview, render, playback, publish |
 | `/studio/topics` | Topics and playlist links |
@@ -602,6 +602,7 @@ POST   /content-projects/{uuid}/background     image-validated upload
 GET    /content-projects/{uuid}/background     artwork, for the preview
 
 POST   /content-projects/{uuid}/render         202, queues the render
+GET    /content-projects/stats                 account-wide counts for the dashboard
 GET    /content-projects/{uuid}/render-status  status + progress
 GET    /content-projects/{uuid}/video          stream the MP4
 GET    /content-projects/{uuid}/download       download the MP4
@@ -643,6 +644,80 @@ GET    /content-projects/{uuid}/stream         signed video delivery (unauthenti
 The last three are necessarily unauthenticated. The OAuth callback is reached by a Google redirect and is bound to its user by a single-use `state`. The stream route is reached by a `<video>` element, which cannot attach a bearer token; the short-lived signature issued by `/media-links` is its authorization.
 
 ---
+
+## The Studio table
+
+`/studio` is a server-driven table. Filtering, searching, sorting and paging all
+happen in SQL, which matters for a reason beyond speed: a browser can only sort
+the rows it was given, so sorting a downloaded list silently means "sort this
+page", and the answer changes with how many rows happened to arrive.
+
+**Default order: Updated, newest first** — and the table says so, above the
+headers, rather than leaving it to be inferred from one small arrow.
+
+### Two kinds of state
+
+| | Lives in | Because |
+|---|---|---|
+| Search, filters, sort, page | the **URL** | a narrowed view should survive a refresh, come back with the back button, and mean the same thing when pasted to somebody else |
+| Column order, widths, hidden columns, density | **browser storage** | it is personal to one browser, and nobody wants to send a colleague their column widths |
+
+So `/studio?q=lapar&youtube_status=published&page=2` is a link you can bookmark
+or share, and it will show the same rows to whoever opens it — arranged
+according to *their* column preferences.
+
+### Sorting
+
+Click a header to sort ascending, again for descending, and a third time to
+return to the default. That third state matters: without it there is no way
+back to "newest first" once a column has been clicked.
+
+Sortable: working title, topic, TEMA, speaker, audio duration, render status,
+Drive status, YouTube status, created, updated. Topic and speaker sort by the
+related name, with unattributed projects last in both directions — nobody scans
+an A–Z list for the rows missing the thing they sorted by.
+
+### Search and filters
+
+Search covers the working title, the on-screen titles, the topic and speaker
+names, and the YouTube video id. It is debounced, and it only ever reads Keje's
+own records — typing in the search box never calls Google.
+
+Filters: topic, speaker (including **No speaker**), render, Drive and YouTube
+status. Two are worth calling out because they are not plain column matches:
+
+- **Outdated** finds videos whose frames no longer match their project. That is
+  a comparison against a render fingerprint, so it is persisted as a column
+  rather than computed per row — which also means renaming a speaker or a topic
+  marks their rendered projects outdated, because those names are drawn on the
+  video.
+- **Published** includes a video uploaded as scheduled that YouTube has since
+  released. Our pipeline status froze when the upload returned; the filter means
+  what is true now.
+
+Active filters appear as chips under the toolbar, each removable on its own.
+**Clear filters** and **Reset table layout** are deliberately separate: one
+changes which rows you see, the other changes how they are drawn, and a single
+button doing both surprises whoever wanted the other.
+
+### Columns
+
+Drag the handle in a header to reorder. Drag a column's right edge to resize.
+Hide what you do not need from **Columns**, and switch between comfortable and
+compact from **Density**. All of it is remembered per browser and restored on
+the next visit; **Reset table layout** puts it back.
+
+The working title and the row's Open action are pinned and cannot be hidden — a
+row scrolled away from its own name is a row of statuses belonging to nothing.
+
+### A note on "Updated"
+
+Background YouTube status polling deliberately does **not** touch a project's
+`updated_at`. That column means somebody changed the project, and it is what the
+table sorts by out of the box; letting a status poll move it made rows climb the
+list on their own and migrate between pages under a reader who was doing
+nothing.
+
 
 ## Choosing a thumbnail
 
