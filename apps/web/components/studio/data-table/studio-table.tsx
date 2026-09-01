@@ -167,11 +167,23 @@ export function StudioTable({
 
                     {/*
                         A second surface onto the same query the toolbar edits,
-                        not a second filter state. Sticky below the header row
-                        so both survive a long page — the offset is the header
-                        row's own height.
+                        not a second filter state.
+
+                        Deliberately *not* sticky. Pinning it too costs a
+                        permanent second band of header on every screen, and
+                        filters are set once and then scrolled past — unlike the
+                        column labels, which you need to read a row you have
+                        scrolled to. So it scrolls away and the labels stay.
+
+                        `relative z-0` is load-bearing rather than decorative:
+                        the pinned cells inside this row are `z-20` so they
+                        outrank the row content they slide over, and without a
+                        stacking context here they would also outrank the header
+                        row above (`z-10`) and slide over *it* on the way out of
+                        view. Giving the row its own context keeps that z-20
+                        local, so the whole row passes under the header as one.
                     */}
-                    <tr className="sticky top-[2.75rem] z-10 bg-background">
+                    <tr className="relative z-0 bg-background">
                         {columns.map((column) => (
                             <th
                                 key={column}
