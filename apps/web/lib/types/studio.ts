@@ -81,6 +81,12 @@ export type ContentProjectSummary = {
         status: YouTubeStatus;
         label: string;
         scheduled_at: string | null;
+        /**
+         * The schedule this project intends to ask for, while it is still
+         * queued and YouTube has never heard of it. Withheld by the API once
+         * a video exists, so it can never claim a publication already past.
+         */
+        planned_publish_at: string | null;
         /** What YouTube says now — a scheduled video publishes itself. */
         remote_status: string | null;
         remote_label: string | null;
@@ -179,6 +185,8 @@ export type ContentProject = {
         url: string | null;
         uploaded_at: string | null;
         publish_at: string | null;
+        /** Intended but not yet sent; see the summary type. */
+        planned_publish_at: string | null;
         error: string | null;
         metadata: YouTubeMetadata | null;
         /** The fingerprint of the render this video was made from. */

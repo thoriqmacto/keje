@@ -121,6 +121,13 @@ class ContentProjectResource extends JsonResource
                 'url' => $this->youtube_url,
                 'uploaded_at' => $this->youtube_uploaded_at?->toIso8601String(),
                 'publish_at' => $this->youtube_publish_at?->toIso8601String(),
+                // The schedule not yet sent to YouTube — see the summary
+                // resource for why it stops once a video exists. Derived here
+                // too rather than left to the client to dig out of `metadata`,
+                // so both screens answer "when does this go live" the same way.
+                'planned_publish_at' => $this->youtube_status->hasVideo()
+                    ? null
+                    : $this->plannedPublishAt()?->toIso8601String(),
                 'error' => $this->youtube_error,
                 'metadata' => $this->youtube_metadata,
                 // What Google says now, kept apart from our own pipeline status:

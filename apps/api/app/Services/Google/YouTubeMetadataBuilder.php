@@ -38,9 +38,10 @@ class YouTubeMetadataBuilder
     {
         $metadata = (array) ($project->youtube_metadata ?? []);
 
-        $publishAt = filled($metadata['publish_at'] ?? null)
-            ? Carbon::parse($metadata['publish_at'])
-            : null;
+        // One reading of the intended schedule, shared with everything that
+        // reports it. Parsing it a second time here is how the list and the
+        // upload would eventually come to disagree about what was planned.
+        $publishAt = $project->plannedPublishAt();
 
         // A scheduled video is uploaded private and published by YouTube.
         // Asking for a schedule and public at once is contradictory, and

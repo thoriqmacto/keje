@@ -29,6 +29,7 @@ import { YouTubeHistory } from "@/components/studio/youtube-history";
 import {
     youtubeBadgeLabel,
     youtubeBadgeStatus,
+    youtubeSchedule,
     type YouTubeBadgeInput,
 } from "@/lib/studio/youtube-badge";
 import { ProjectPropertiesCard } from "@/components/studio/project-properties";
@@ -678,11 +679,13 @@ function PublicationCard({
                             {project.youtube.error}
                         </p>
                     )}
-                    {project.youtube.publish_at && (
-                        <p className="text-xs text-muted-foreground">
-                            Scheduled for {formatDateTime(project.youtube.publish_at)}
-                        </p>
-                    )}
+                    {/* The same distinction the Studio list draws: a schedule
+                        YouTube is holding, versus one this project has only
+                        decided on. Both belong here — the second is what a
+                        queued project is waiting to do — but reading them as
+                        the same promise is how somebody comes to believe a
+                        video is safely scheduled when nothing was uploaded. */}
+                    <YouTubeScheduleLine project={project} />
                     {/* Where this video is about to go, resolved to names.
                         Shown before the upload button on purpose: the moment
                         to notice a wrong destination is before publishing. */}
@@ -785,5 +788,47 @@ function PublicationCard({
                 </div>
             </CardContent>
         </Card>
+    );
+}
+
+/**
+ * When this video goes live, and how firmly.
+ *
+ * A confirmed schedule reads as it always has. A plan — set in the YouTube
+ * form but never sent, which is every project still waiting on its render —
+ * says so, because "Scheduled for Friday" about a video nobody has uploaded
+ * is a sentence that costs somebody a Friday.
+ */
+function YouTubeScheduleLine({ project }: { project: ContentProject }) {
+    const schedule = youtubeSchedule({
+        scheduledAt: project.youtube.publish_at,
+        plannedPublishAt: project.youtube.planned_publish_at,
+    });
+
+    if (schedule === null) {
+        return null;
+    }
+
+    if (!schedule.planned) {
+        return (
+            <p className="text-xs text-muted-foreground">
+                Scheduled for {formatDateTime(schedule.at)}
+            </p>
+        );
+    }
+
+    return (
+        <p
+            className={`text-xs ${
+                schedule.overdue ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"
+            }`}
+        >
+            {schedule.overdue
+                ? // Not a warning about the video — there isn't one yet. It is
+                  // a warning about the upload, which refuses a publish time
+                  // that has already passed rather than silently never running.
+                  `Was planned for ${formatDateTime(schedule.at)} — choose a new time before uploading`
+                : `Planned for ${formatDateTime(schedule.at)}, once uploaded`}
+        </p>
     );
 }

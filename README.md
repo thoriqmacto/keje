@@ -797,6 +797,35 @@ these are public CDN links to the user's own channel, so proxying adds
 bandwidth, a cache and an SSRF surface in exchange for hiding a request Google
 is already the other end of.
 
+## A planned publication, before it is a scheduled one
+
+A project that will be published on a schedule spends most of its life with
+nobody holding that schedule but Keje. `youtube_publish_at` is written when an
+upload succeeds; until then the intended time lives only in
+`youtube_metadata.publish_at`, where the form put it. The Studio list showed
+just **Pending** for that whole stretch — the publication date decided, stored,
+and nowhere on screen.
+
+Both are reported now, in separate fields, and the interface says which is
+which:
+
+```
+YouTube
+Pending                                 Scheduled
+Planned 1 Dec 2026 · 09:00          →   1 Dec 2026 · 09:00
+```
+
+A plan is not a promise. It can still be edited, and the upload can still fail,
+so it is never drawn as though YouTube were holding a slot it has not been told
+about. The API withholds the planned time entirely once a video exists —
+metadata keeps its `publish_at` after the upload, so a fallback without that
+rule would have every published video advertising a publication that already
+happened.
+
+A plan whose time has passed is shown as **Was planned**, because it now blocks
+the upload rather than approaching: YouTube accepts a past `publishAt` on some
+paths and then silently never publishes, so Keje refuses it up front.
+
 ## What YouTube says now
 
 Our upload pipeline status and the video's current state on YouTube are

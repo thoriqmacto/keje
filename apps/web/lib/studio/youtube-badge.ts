@@ -58,3 +58,67 @@ export function youtubeBadgeLabel(input: YouTubeBadgeInput): string {
 export function youtubeBadgeStatus(input: YouTubeBadgeInput, status: string): string {
     return input.isReplacing && !input.replacementFailed ? "uploading" : status;
 }
+
+/**
+ * The publish time to show under the badge, and what kind of claim it is.
+ *
+ * Two very different facts share this line, and the whole reason for a
+ * function is that they must not be shown as if they were the same one:
+ *
+ *   confirmed   YouTube has the video and a publishAt. It will publish at
+ *               that time whether or not Keje is running. This is a promise.
+ *
+ *   planned     Somebody filled in a schedule and nothing has been uploaded
+ *               yet — usually because the render is still queued. It is what
+ *               *will be asked for*, and asking can still fail.
+ *
+ * A queued project used to show a bare "Pending" with the date it was already
+ * scheduled for nowhere on the page. Showing that date undecorated would have
+ * been the opposite mistake: a row reading "Pending · 12 Sep 19:00" looks like
+ * YouTube is holding a slot it has never been told about.
+ *
+ * `overdue` exists because a plan, unlike a schedule, goes off. The upload
+ * refuses a publishAt in the past outright (YouTube accepts it on some paths
+ * and then silently never publishes), so a plan whose time has gone is not a
+ * date to look forward to — it is a project that cannot be uploaded until
+ * somebody changes it.
+ */
+export type YouTubeScheduleInput = {
+    /** Confirmed by YouTube at upload; `null` until then. */
+    scheduledAt?: string | null;
+    /** Intended, not yet sent. The API withholds it once a video exists. */
+    plannedPublishAt?: string | null;
+};
+
+export type YouTubeSchedule = {
+    at: string;
+    /** True when this is an intention rather than something YouTube holds. */
+    planned: boolean;
+    /** A plan whose time has passed, which now blocks the upload. */
+    overdue: boolean;
+};
+
+export function youtubeSchedule(
+    input: YouTubeScheduleInput,
+    now: Date = new Date(),
+): YouTubeSchedule | null {
+    // A confirmed schedule wins outright. Both are set for most of a
+    // scheduled video's life, and only one of them is what YouTube will act on.
+    if (input.scheduledAt) {
+        return { at: input.scheduledAt, planned: false, overdue: false };
+    }
+
+    if (!input.plannedPublishAt) {
+        return null;
+    }
+
+    const at = Date.parse(input.plannedPublishAt);
+
+    // An unparseable date is worse than no date: it renders as "Invalid Date"
+    // and tells somebody their publication is broken when it is not.
+    if (Number.isNaN(at)) {
+        return null;
+    }
+
+    return { at: input.plannedPublishAt, planned: true, overdue: at <= now.getTime() };
+}

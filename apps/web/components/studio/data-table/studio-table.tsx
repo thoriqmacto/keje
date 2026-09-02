@@ -12,6 +12,7 @@ import { scrollRegionHeight } from "@/lib/layout-metrics";
 import {
     youtubeBadgeLabel,
     youtubeBadgeStatus,
+    youtubeSchedule,
     type YouTubeBadgeInput,
 } from "@/lib/studio/youtube-badge";
 import {
@@ -295,20 +296,7 @@ function Cell({ column, project }: { column: ColumnId; project: ContentProjectSu
             );
 
         case "youtube":
-            return (
-                <span className="flex flex-col gap-0.5">
-                    <ProjectStatusBadge
-                        pipeline="youtube"
-                        status={youtubeBadgeStatus(badgeInput(project), project.youtube.status)}
-                        label={youtubeBadgeLabel(badgeInput(project))}
-                    />
-                    {project.youtube.scheduled_at && (
-                        <span className="text-[11px] text-muted-foreground">
-                            {formatDateTime(project.youtube.scheduled_at)}
-                        </span>
-                    )}
-                </span>
-            );
+            return <YouTubeCell project={project} />;
 
         case "updated_at":
             return (
@@ -334,4 +322,47 @@ function Cell({ column, project }: { column: ColumnId; project: ContentProjectSu
                 </Button>
             );
     }
+}
+
+/**
+ * The YouTube column: where this video stands, and when it goes live.
+ *
+ * The date line is the part worth care. A project sitting in the render queue
+ * showed nothing but "Pending", even when its publication date had been
+ * decided days earlier — the one thing somebody scanning this column is
+ * looking for. But a confirmed schedule and an intended one are different
+ * promises, so they do not get to look identical: a plan is labelled as a
+ * plan, and a confirmed schedule keeps the bare date it has always shown.
+ */
+function YouTubeCell({ project }: { project: ContentProjectSummary }) {
+    const schedule = youtubeSchedule({
+        scheduledAt: project.youtube.scheduled_at,
+        plannedPublishAt: project.youtube.planned_publish_at,
+    });
+
+    return (
+        <span className="flex flex-col gap-0.5">
+            <ProjectStatusBadge
+                pipeline="youtube"
+                status={youtubeBadgeStatus(badgeInput(project), project.youtube.status)}
+                label={youtubeBadgeLabel(badgeInput(project))}
+            />
+
+            {schedule && (
+                <span
+                    className={`text-[11px] ${
+                        schedule.overdue
+                            ? "text-amber-700 dark:text-amber-400"
+                            : "text-muted-foreground"
+                    }`}
+                >
+                    {/* A plan that has gone past is not a date to look forward
+                        to — the upload refuses it — so it is flagged rather
+                        than read out as though it were still coming. */}
+                    {schedule.planned && (schedule.overdue ? "Was planned " : "Planned ")}
+                    {formatDateTime(schedule.at)}
+                </span>
+            )}
+        </span>
+    );
 }
