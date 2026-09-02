@@ -161,6 +161,37 @@ class ContentProject extends Model
     }
 
     /**
+     * When this project *intends* to have YouTube publish it.
+     *
+     * Deliberately separate from `youtube_publish_at`, which is what YouTube
+     * confirmed and is only written once an upload has succeeded. Between
+     * "somebody set a schedule in the form" and "the video is on the channel"
+     * this is the only record that a schedule exists at all — and that gap is
+     * exactly where a queued project sits.
+     *
+     * A plan is not a commitment. It can be edited, the upload can fail, and
+     * a plan whose time has passed will be refused outright by
+     * YouTubeMetadataBuilder::assertScheduleIsFuture(). Anything showing this
+     * to a person has to say which of the two it is looking at.
+     */
+    public function plannedPublishAt(): ?\Illuminate\Support\Carbon
+    {
+        $value = $this->youtube_metadata['publish_at'] ?? null;
+
+        if (blank($value)) {
+            return null;
+        }
+
+        try {
+            return \Illuminate\Support\Carbon::parse($value);
+        } catch (\Exception) {
+            // Validated on the way in, so this is a hand-edited row or an
+            // older format. One bad value must not take down the whole list.
+            return null;
+        }
+    }
+
+    /**
      * Attach the latest attempt's progress as `render_progress` via a
      * subselect, so listing N projects stays one query.
      */

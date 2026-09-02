@@ -65,6 +65,23 @@ class ContentProjectSummaryResource extends JsonResource
                 'label' => $this->youtube_status->label(),
                 'scheduled_at' => $this->youtube_publish_at?->toIso8601String(),
 
+                /*
+                 * The schedule this project is *going* to ask for, for the
+                 * long stretch where it is queued and YouTube has never heard
+                 * of it. Without this the list says only "Pending" for a
+                 * project whose publication date was decided days ago, which
+                 * is the one fact somebody scanning the column wants.
+                 *
+                 * Withheld once a video exists, and that is the point of
+                 * asking the enum rather than comparing timestamps: the
+                 * metadata keeps its publish_at after the upload, so a live
+                 * video would otherwise go on advertising a publication that
+                 * has already happened — or worse, one that never will.
+                 */
+                'planned_publish_at' => $this->youtube_status->hasVideo()
+                    ? null
+                    : $this->plannedPublishAt()?->toIso8601String(),
+
                 // The list shows what YouTube says now, so a video that has
                 // since published stops claiming to be scheduled.
                 'remote_status' => $this->youtube_remote_status,
