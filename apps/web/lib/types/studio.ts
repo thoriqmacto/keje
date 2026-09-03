@@ -637,29 +637,3 @@ export type PrunePreview = {
     bytes: Record<string, number>;
 };
 
-// ── Bulk re-render ──────────────────────────────────────────────────────────
-
-export type FinishPlan = {
-    outdated: number;
-    eligible: number;
-    already_in_progress: number;
-    blocked: number;
-    blocked_reasons: Record<string, number>;
-    projects: { id: string; working_title: string; has_youtube_video: boolean }[];
-    blocked_projects: {
-        id: string;
-        working_title: string;
-        reason_code: string;
-        reason: string;
-    }[];
-    limited: boolean;
-    batch_limit: number;
-};
-
-export type FinishResult = {
-    queued: number;
-    skipped: number;
-    blocked: number;
-    queued_projects: { id: string; working_title: string }[];
-    blocked_projects: { id: string; working_title: string; reason: string }[];
-};

@@ -873,6 +873,17 @@ The toolbar and the row of filters under the column headers are two surfaces ont
 
 The **Working title** column filter is narrower than the global search box: it matches that column only, while search also covers the topic, the speaker and the titles drawn on the video.
 
+### One scrollbar, not two
+
+`/studio` fits the window. The title, the count, the sort summary and every control share two short rows, and the table below them is the only thing that scrolls — so the filters stay put while the rows move, and the window itself never scrolls.
+
+That used to be arithmetic: the table was capped at `100vh − nav − 18rem`, a constant somebody had to keep in step with however much chrome the page happened to draw. It drifted, the page scrolled as well as the table, and the toolbar slid off the top exactly when you reached for it. The page now caps itself at the viewport and the table takes whatever is left, which is the same idea with no number to maintain.
+
+Two details do the work, and both are easy to remove by accident:
+
+- **`min-h-0`** on the table and its wrapper. A flex item will not shrink below its own content height without it; measured with it removed, a 25-row page overflows the window by about 400px and pushes the pagination off the bottom.
+- **`h-14` on the header element itself**, not on the row inside it, so its bottom border falls within the 3.5rem that `--app-nav-height` claims. With the height on the inner row the bar measured 57px against a variable saying 56, which left one stubborn pixel of page scroll at every window size.
+
 ---
 
 ## Storage
@@ -898,15 +909,13 @@ Those reasons come from the same code that does the deleting, so the page cannot
 
 ---
 
-## Finish all
+## Bulk re-render (API only)
 
-Studio → **Finish all** re-renders every project whose video was made from inputs the project no longer has.
+`GET /content-projects/finish-plan` and `POST /content-projects/finish-all` re-render every project in a filtered view whose video was made from inputs the project no longer has. Scope is the filtered dataset, not one page of it, and the plan endpoint reports what would happen before anything is queued.
 
-**Scope is the filtered view, not the visible page.** Filtering to a topic and pressing Finish all acts on every match across every page — a button meaning "the twenty-five rows you can see" would leave you paging through pressing it with no way to know when you were done.
+**It queues renders and nothing else** — videos already on YouTube are never replaced, deleted or re-uploaded, and Drive backups are untouched.
 
-A plan is shown first: how many are ready, how many are already rendering, and how many are blocked with the reason for each.
-
-**It queues renders and nothing else.** Videos already on YouTube are not replaced, deleted or re-uploaded, and Drive backups are untouched. Replacing a published video costs its URL, its views and every comment, which is why that stays a confirmed, one-at-a-time action on the project page. Once a fresh render finishes, the project offers **Replace YouTube video** as usual.
+There is **no button for this in the Studio**. It had one and it was removed: it went unused, and a bulk action nobody presses is still a row of chrome above the table on every visit. The endpoints and their tests stayed, so restoring the control is a UI change rather than a rewrite.
 
 
 ## Correcting a video that is already on YouTube

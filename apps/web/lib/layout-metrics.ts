@@ -24,14 +24,12 @@ export const layoutMetricsStyle = {
     [NAV_HEIGHT_VAR]: `${NAV_HEIGHT_REM}rem`,
 } as React.CSSProperties;
 
-/**
- * How tall a full-height scroll region can be beneath the nav.
- *
- * `extraRem` is whatever else sits above it on the page — a heading, a
- * toolbar, the pagination below. Callers pass their own so the arithmetic
- * stays visible at the call site rather than hidden behind a name that would
- * have to be guessed at.
+/*
+ * There was a scrollRegionHeight(extraRem) helper here, and it is gone on
+ * purpose. It asked each caller to total up its own chrome in rem and pass
+ * the answer — arithmetic that was correct on the day it was written and
+ * silently wrong the next time a row was added above the table. The pages
+ * that need a full-height scroll region now cap themselves at the nav-aware
+ * viewport height and let a `flex-1 min-h-0` child take what is left, which
+ * needs no number at all.
  */
-export function scrollRegionHeight(extraRem: number): string {
-    return `calc(100vh - var(${NAV_HEIGHT_VAR}) - ${extraRem}rem)`;
-}

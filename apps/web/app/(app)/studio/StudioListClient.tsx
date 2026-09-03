@@ -6,7 +6,6 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import useSWR from "swr";
 import { Button } from "@/components/ui/button";
 import { StudioTable } from "@/components/studio/data-table/studio-table";
-import { FinishAll } from "@/components/studio/finish-all";
 import { StudioTablePagination } from "@/components/studio/data-table/pagination";
 import { COLUMN_LABELS, StudioTableToolbar } from "@/components/studio/data-table/toolbar";
 import { listProjects, listSpeakers, listTopics, studioKeys } from "@/lib/studio/api";
@@ -143,34 +142,57 @@ export default function StudioListClient() {
     const projects = data?.data ?? [];
     const meta = data?.meta;
 
-    return (
-        <section className="mx-auto flex w-full max-w-[110rem] flex-col gap-6 px-4 py-10">
-            <div className="flex flex-wrap items-end justify-between gap-4">
-                <div className="flex flex-col gap-1">
-                    <h1 className="text-3xl font-semibold tracking-tight">Content Studio</h1>
-                    <p className="text-muted-foreground">
-                        Lecture recordings and artwork in, YouTube-ready video out.
-                    </p>
-                </div>
-                {/* No New Content button here any more: it lives in the app
-                    header now, where it is reachable from every page rather
-                    than only this one. Two equally prominent copies of the
-                    same action on the same screen is one too many — the empty
-                    state below still offers it, because that is the one place
-                    somebody needs pointing at it. */}
-            </div>
+    const total = meta?.total ?? 0;
 
-            {/* Offered beside the table's own actions rather than in the
-                toolbar's filter row: it acts on the dataset those filters
-                describe, so it belongs next to the result count. */}
-            <div className="flex flex-wrap items-start gap-2">
-                <FinishAll query={query} onFinished={() => void mutate()} />
+    return (
+        /*
+         * The page is exactly the viewport, and the table is the only thing
+         * that scrolls.
+         *
+         * It used to be a stack of natural-height blocks with the table given
+         * a guessed cap of `100vh - nav - 18rem`. Everything above it added up
+         * to more than that 18rem, so the window scrolled *as well as* the
+         * table — two scrollbars, and the toolbar drifting off the top exactly
+         * when you wanted to change a filter. Worse, the 18 was a constant
+         * nobody could keep honest: adding a row of chrome silently made it
+         * wrong again.
+         *
+         * `max-h` rather than `h`, which is the difference between a short
+         * list looking deliberate and looking broken: with three projects the
+         * section is only as tall as it needs to be, where a fixed height
+         * would draw a viewport-tall bordered box with three rows adrift at
+         * the top of it. Past that the cap engages, and the table — the one
+         * item allowed to shrink, via min-h-0 — gives back the difference.
+         *
+         * dvh rather than vh so mobile browser chrome sliding in and out does
+         * not leave a permanent strip of page scroll behind it.
+         */
+        <section className="mx-auto flex max-h-[calc(100dvh-var(--app-nav-height))] w-full max-w-[110rem] flex-col gap-2 px-4 py-4">
+            {/* Title and description on one line rather than two, with the
+                count beside them: three short facts about the list, none of
+                which is a control, so none of them needs its own row. */}
+            <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                <h1 className="text-xl font-semibold tracking-tight">Content Studio</h1>
+                <p className="text-xs text-muted-foreground" aria-live="polite">
+                    {/* Only the filtered total. Reporting "23 of 247" would
+                        mean a second count of the whole table on every
+                        keystroke, to say something nobody acts on. */}
+                    {hasActiveFilters(query)
+                        ? `${total} matching ${total === 1 ? "project" : "projects"}`
+                        : `${total} ${total === 1 ? "project" : "projects"}`}
+                    {" · "}
+                    {/* The ordering, said out loud. An arrow on one header is
+                        easy to miss, and "why is this project first" is a
+                        question the table should not make anybody work out. */}
+                    {describeSort(query, COLUMN_LABELS[sortColumn(query.sort)])}
+                    {isValidating && !isLoading && (
+                        <span className="ml-2 opacity-60">Updating…</span>
+                    )}
+                </p>
             </div>
 
             <StudioTableToolbar
                 query={query}
-                total={meta?.total ?? 0}
-                isValidating={isValidating && !isLoading}
                 preferences={preferences}
                 onQueryChange={setQuery}
                 onToggleColumn={(column: ColumnId) =>
@@ -207,13 +229,6 @@ export default function StudioListClient() {
                 }}
             />
 
-            {/* The ordering, said out loud. An arrow on one header is easy to
-                miss, and "why is this project first" is a question the table
-                should not make anybody work out. */}
-            <p className="-mt-3 text-xs text-muted-foreground">
-                {describeSort(query, COLUMN_LABELS[sortColumn(query.sort)])}
-            </p>
-
             {error ? (
                 <ErrorState onRetry={() => void mutate()} />
             ) : isLoading ? (
@@ -228,7 +243,11 @@ export default function StudioListClient() {
                     <EmptyStudio />
                 )
             ) : (
-                <div className="flex flex-col">
+                // min-h-0 is the load-bearing part, here and on the scroll
+                // region inside. A flex item will not shrink below its content
+                // height without it, so the table would push the pagination
+                // off the bottom of the screen instead of scrolling.
+                <div className="flex min-h-0 flex-1 flex-col">
                     <StudioTable
                         projects={projects}
                         query={query}
@@ -275,7 +294,7 @@ function sortColumn(sort: StudioSortKey): ColumnId {
  */
 function TableSkeleton() {
     return (
-        <div className="overflow-hidden rounded-lg border" aria-busy="true" aria-live="polite">
+        <div className="min-h-0 overflow-hidden rounded-lg border" aria-busy="true" aria-live="polite">
             <span className="sr-only">Loading projects…</span>
             {Array.from({ length: 8 }).map((_, row) => (
                 <div key={row} className="flex gap-4 border-b px-3 py-3 last:border-0">
@@ -301,7 +320,7 @@ function TableSkeleton() {
  */
 function ErrorState({ onRetry }: { onRetry: () => void }) {
     return (
-        <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed p-10">
+        <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed p-8">
             <h2 className="text-lg font-medium">Could not load Studio projects.</h2>
             <p className="text-sm text-muted-foreground">
                 Your filters are still applied — retrying will load the same view.
@@ -315,7 +334,7 @@ function ErrorState({ onRetry }: { onRetry: () => void }) {
 
 function EmptyFiltered({ onClear }: { onClear: () => void }) {
     return (
-        <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed p-10">
+        <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed p-8">
             <h2 className="text-lg font-medium">No projects match these filters.</h2>
             <Button size="sm" variant="outline" onClick={onClear}>
                 Clear filters
@@ -326,7 +345,7 @@ function EmptyFiltered({ onClear }: { onClear: () => void }) {
 
 function EmptyStudio() {
     return (
-        <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed p-10">
+        <div className="flex flex-col items-start gap-3 rounded-lg border border-dashed p-8">
             <h2 className="text-lg font-medium">No content yet</h2>
             <p className="text-sm text-muted-foreground">
                 Create your first project to upload a lecture recording, add the Kajian Tematik

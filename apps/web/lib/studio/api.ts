@@ -17,8 +17,6 @@ import type {
     YouTubePublication,
     YouTubeRecentUpload,
     YouTubeReplacement,
-    FinishPlan,
-    FinishResult,
     PaginatedResponse,
     PrunePreview,
     StorageInventory,
@@ -562,27 +560,3 @@ export async function pruneStorage(): Promise<{ pruned: number; skipped: number;
     return data.data;
 }
 
-// ── Bulk re-render ──────────────────────────────────────────────────────────
-
-/**
- * What a bulk re-render would do, over the whole filtered view.
- *
- * Takes the same query the list does, so "this view" means every matching
- * project rather than the page on screen.
- */
-export async function getFinishPlan(query: StudioProjectQuery): Promise<FinishPlan> {
-    const { data } = await api.get<{ data: FinishPlan }>("/content-projects/finish-plan", {
-        params: toRequestParams(query),
-    });
-    return data.data;
-}
-
-/** Queue the renders. Never touches YouTube or Drive. */
-export async function finishOutdated(query: StudioProjectQuery): Promise<FinishResult> {
-    const { data } = await api.post<{ data: FinishResult }>(
-        "/content-projects/finish-all",
-        {},
-        { params: toRequestParams(query) },
-    );
-    return data.data;
-}

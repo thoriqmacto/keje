@@ -36,7 +36,7 @@ export function StudioTablePagination({
         onQueryChange(updateQuery(query, { page: Math.min(lastPage, Math.max(1, next)) }));
 
     return (
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t px-3 py-2 text-xs">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t px-3 py-1.5 text-xs">
             <p className="text-muted-foreground">
                 {meta.total === 0
                     ? "No projects"
