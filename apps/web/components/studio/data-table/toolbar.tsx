@@ -82,10 +82,21 @@ export const COLUMN_LABELS: Record<ColumnId, string> = {
     actions: "Actions",
 };
 
+/**
+ * Search, filters and the layout menus, on one line.
+ *
+ * This was three stacked rows — filters, then a result count beside the layout
+ * menus, then the chips. Three rows of chrome above a table is three rows of
+ * table you cannot see, and on a laptop it was the difference between the page
+ * fitting the screen and not. The count moved up beside the page title, where
+ * it reads as a description of the list rather than as a fourth control, and
+ * everything that is actually a control now shares one row.
+ *
+ * The chips stay a row of their own, but only when something is filtered — an
+ * always-present empty row is the cost this layout is trying to avoid.
+ */
 export function StudioTableToolbar({
     query,
-    total,
-    isValidating,
     preferences,
     onQueryChange,
     onToggleColumn,
@@ -97,8 +108,6 @@ export function StudioTableToolbar({
     onClearSavedView,
 }: {
     query: StudioProjectQuery;
-    total: number;
-    isValidating: boolean;
     preferences: TablePreferences;
     onQueryChange: (next: StudioProjectQuery) => void;
     onToggleColumn: (column: ColumnId) => void;
@@ -116,7 +125,7 @@ export function StudioTableToolbar({
     });
 
     return (
-        <div className="flex flex-col gap-3">
+        <div className="flex flex-col gap-2">
             <div className="flex flex-wrap items-center gap-2">
                 <SearchBox query={query} onQueryChange={onQueryChange} />
 
@@ -163,29 +172,21 @@ export function StudioTableToolbar({
                         onQueryChange(updateQuery(query, { youtubeStatus }))
                     }
                 />
-            </div>
 
-            <div className="flex flex-wrap items-center justify-between gap-2">
-                <p className="text-xs text-muted-foreground" aria-live="polite">
-                    {/* Only the filtered total. Reporting "23 of 247" would
-                        mean a second count of the whole table on every
-                        keystroke, to say something nobody acts on. */}
-                    {hasActiveFilters(query)
-                        ? `${total} matching ${total === 1 ? "project" : "projects"}`
-                        : `${total} ${total === 1 ? "project" : "projects"}`}
-                    {isValidating && <span className="ml-2 opacity-60">Updating…</span>}
-                </p>
-
-                <div className="flex items-center gap-2">
+                {/* ml-auto rather than a wrapper with justify-between: the
+                    layout menus should sit at the right end of whatever line
+                    they land on, and on a narrow screen that is a line of
+                    their own rather than a column squeezed beside the
+                    filters. */}
+                <div className="ml-auto flex items-center gap-2">
                     <ViewMenu
-                    isCurrentSaved={viewMatchesQuery(savedView, query)}
-                    hasSavedView={savedView !== null}
-                    onSave={onSaveView}
-                    onRestore={onRestoreView}
-                    onClear={onClearSavedView}
-                />
-
-                <ColumnsMenu preferences={preferences} onToggleColumn={onToggleColumn} />
+                        isCurrentSaved={viewMatchesQuery(savedView, query)}
+                        hasSavedView={savedView !== null}
+                        onSave={onSaveView}
+                        onRestore={onRestoreView}
+                        onClear={onClearSavedView}
+                    />
+                    <ColumnsMenu preferences={preferences} onToggleColumn={onToggleColumn} />
                     <DensityMenu
                         density={preferences.density}
                         onDensityChange={onDensityChange}
@@ -243,7 +244,7 @@ function SearchBox({
             value={value}
             aria-label="Search content"
             placeholder="Search content…"
-            className="h-9 w-full sm:w-64"
+            className="h-8 w-full sm:w-56"
             onChange={(event) => setValue(event.target.value)}
             onKeyDown={(event) => {
                 if (event.key === "Escape") setValue("");
@@ -269,7 +270,7 @@ function FilterMenu({
     return (
         <DropdownMenu>
             <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="h-9">
+                <Button variant="outline" size="sm" className="h-8">
                     {label}
                     {selected && (
                         <span className="ml-1 rounded bg-primary/10 px-1 text-xs">
@@ -488,7 +489,7 @@ function ViewMenu({
     return (
         <DropdownMenu>
             <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="h-9">
+                <Button variant="outline" size="sm" className="h-8">
                     View
                     {/* A dot rather than a word: the menu says the rest, and
                         the toolbar is already busy. */}

@@ -8,7 +8,6 @@ import { ColumnHeader } from "@/components/studio/data-table/column-header";
 import { HeaderFilterCell } from "@/components/studio/data-table/header-filters";
 import { COLUMN_LABELS } from "@/components/studio/data-table/toolbar";
 import { formatDateTime, formatDuration } from "@/lib/studio/format";
-import { scrollRegionHeight } from "@/lib/layout-metrics";
 import {
     youtubeBadgeLabel,
     youtubeBadgeStatus,
@@ -113,25 +112,32 @@ export function StudioTable({
 
     return (
         /*
-         * Scroll lives on this wrapper in both axes, and the height is bounded
-         * on purpose.
+         * Scroll lives on this wrapper in both axes, and its height comes from
+         * the space the page has left.
          *
          * `overflow-x: auto` alone computes `overflow-y` to `auto` as well,
          * which quietly made this div the sticky header's scroll container —
          * and with the height left to the content there was nowhere for the
          * header to stick to, so it scrolled away with the page while looking
-         * like it was pinned. Bounding the height gives it somewhere to stick,
-         * and keeps the toolbar, the "sorted by" line and the pagination in
-         * place while the rows move.
+         * like it was pinned. A bounded height gives it somewhere to stick,
+         * and keeps the toolbar and the pagination in place while rows move.
+         *
+         * That bound used to be `100vh - nav - 18rem`, a constant that had to
+         * be kept in step with however much chrome the page happened to draw
+         * — and was not, so the window scrolled as well as the table. The page
+         * caps itself at the viewport now and this takes what is left.
+         *
+         * `min-h-0` is the load-bearing half and not a tidy-up: a flex item
+         * will not shrink below its own content height without it. Measured
+         * with it removed, a 25-row page overflows the window by ~400px and
+         * pushes the pagination off the bottom of the screen — which is the
+         * failure this whole arrangement exists to prevent.
          *
          * It also settles the two-sticky-layer problem by construction: this
          * region cannot pass beneath the app header, so its own header has
          * nothing to collide with.
          */
-        <div
-            className="overflow-auto rounded-lg border"
-            style={{ maxHeight: scrollRegionHeight(18) }}
-        >
+        <div className="min-h-0 flex-1 overflow-auto rounded-lg border">
             <table className="w-full border-collapse text-sm" style={{ tableLayout: "fixed" }}>
                 <thead>
                     {/* Sticky against the wrapper above, which is what

@@ -27,11 +27,25 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     }
 
     return (
-        <div className="flex min-h-screen flex-col" style={layoutMetricsStyle}>
+        /*
+            min-h-dvh rather than min-h-screen. `100vh` on mobile is the
+            viewport with the browser chrome *hidden*, so a page sized to fit
+            exactly — the Studio list is — still had a strip of scroll left
+            over while the address bar was showing. dvh is the height actually
+            available right now.
+        */
+        <div className="flex min-h-dvh flex-col" style={layoutMetricsStyle}>
             {/*
                 Sticky rather than scrolling away. On a long project page the
                 navigation was reachable only by scrolling back to the top,
                 which is a long way up from the bottom of a render log.
+
+                h-14 is on the header rather than on the row inside it, so the
+                border-b falls *within* the 3.5rem that --app-nav-height
+                claims. With the height on the inner row the bar measured 57px
+                against a variable saying 56, and a page sized to fit exactly
+                — the Studio list is — was left with one stubborn pixel of
+                scroll at every window size.
 
                 z-30 puts it above the Studio table's own sticky header (z-10)
                 and its pinned columns (z-20), so the two sticky layers stack
@@ -41,13 +55,13 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 table rows show through as they pass underneath, which reads
                 as a rendering fault rather than a design.
             */}
-            <header className="sticky top-0 z-30 border-b bg-background">
+            <header className="sticky top-0 z-30 h-14 border-b bg-background">
                 {/*
                     min-w-0 + overflow-x-auto let the nav scroll on a narrow
                     screen instead of pushing past the viewport, which was
                     hiding "Settings" behind the Sign out button on mobile.
                 */}
-                <div className="mx-auto flex h-14 w-full max-w-5xl items-center justify-between gap-3 px-4">
+                <div className="mx-auto flex h-full w-full max-w-5xl items-center justify-between gap-3 px-4">
                     <div className="flex min-w-0 items-center gap-6">
                         <Link href="/dashboard" className="shrink-0 font-semibold tracking-tight">
                             {APP_NAME}
