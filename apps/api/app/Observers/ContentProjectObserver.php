@@ -6,16 +6,25 @@ use App\Models\ContentProject;
 use App\Services\Media\RenderInputFingerprint;
 
 /**
- * Keeps `render_is_stale` true to the fingerprint.
+ * Derived columns the Studio list needs the database to be able to read.
  *
- * The flag exists so the Studio list can filter on "this video's frames no
- * longer match its project" — a question that cannot be asked in SQL, because
- * staleness is a comparison against a hash computed in PHP from the project's
- * current inputs. Persisting the answer is what makes the Outdated filter
- * real rather than a client-side illusion over one page of rows.
+ * Both exist for the same reason: the list has to filter and sort over every
+ * project a user owns, not over the page that happens to be downloaded, and
+ * neither of these facts could be asked for in SQL as it was stored.
  *
- * Computed on `saving`, so it is written in the same statement as the change
- * that caused it. Nothing has to remember to call anything.
+ *   render_is_stale                 "this video's frames no longer match its
+ *                                   project" — a comparison against a hash
+ *                                   computed in PHP from the current inputs.
+ *
+ *   youtube_planned_publish_at      the publish time somebody entered in the
+ *                                   form, which lived only inside the
+ *                                   youtube_metadata JSON. Sorting by YouTube
+ *                                   has to order two planned projects by when
+ *                                   they are planned for.
+ *
+ * Both are computed on `saving`, so each is written in the same statement as
+ * the change that caused it. Nothing has to remember to call anything, and
+ * there is no window where the row disagrees with itself.
  */
 class ContentProjectObserver
 {
@@ -26,6 +35,10 @@ class ContentProjectObserver
     public function saving(ContentProject $project): void
     {
         $project->render_is_stale = $this->isStale($project);
+
+        // Parsed by the model, so the list, the upload job and this column
+        // cannot come to disagree about what was planned.
+        $project->youtube_planned_publish_at = $project->plannedPublishAt();
     }
 
     /**

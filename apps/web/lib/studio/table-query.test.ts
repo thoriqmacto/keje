@@ -163,3 +163,16 @@ test("dates are described by recency and everything else by direction", () => {
         "Sorted by Working title, ascending",
     );
 });
+
+test("the YouTube sort is described by its ends, not its direction", () => {
+    // The server orders by how far along the lifecycle a project is. "YouTube,
+    // ascending" describes the enum's spelling, which is not what happens.
+    assert.equal(
+        describeSort({ ...DEFAULT_QUERY, sort: "youtube_status", direction: "asc" }, "YouTube"),
+        "Sorted by YouTube, not planned first",
+    );
+    assert.equal(
+        describeSort({ ...DEFAULT_QUERY, sort: "youtube_status", direction: "desc" }, "YouTube"),
+        "Sorted by YouTube, published first",
+    );
+});

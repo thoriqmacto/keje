@@ -74,6 +74,9 @@ class ContentProject extends Model
             'drive_uploaded_at' => 'datetime',
             'youtube_uploaded_at' => 'datetime',
             'youtube_publish_at' => 'datetime',
+            // Derived from youtube_metadata.publish_at and persisted so the
+            // Studio list can order by it; see ContentProjectObserver.
+            'youtube_planned_publish_at' => 'datetime',
             'finalized_at' => 'datetime',
             // Derived from the render fingerprint and persisted so the Studio
             // list can filter on it; see ContentProjectObserver.

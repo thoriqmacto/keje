@@ -127,7 +127,7 @@ class ContentProjectResource extends JsonResource
                 // so both screens answer "when does this go live" the same way.
                 'planned_publish_at' => $this->youtube_status->hasVideo()
                     ? null
-                    : $this->plannedPublishAt()?->toIso8601String(),
+                    : $this->youtube_planned_publish_at?->toIso8601String(),
                 'error' => $this->youtube_error,
                 'metadata' => $this->youtube_metadata,
                 // What Google says now, kept apart from our own pipeline status:

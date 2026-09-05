@@ -264,19 +264,32 @@ export function clampPage(query: StudioProjectQuery, lastPage: number): StudioPr
     return { ...query, page: lastPage };
 }
 
-/** "Sorted by Updated, newest first" — the ordering, said out loud. */
+/**
+ * "Sorted by Updated, newest first" — the ordering, said out loud.
+ *
+ * Three kinds of ordering, because "ascending" describes none of them well.
+ * A date reads as recency. YouTube reads as progress along a lifecycle, and
+ * naming the end that comes first is the only way to say that in four words:
+ * the server orders by how far along a project is, not by the enum's spelling.
+ */
 export function describeSort(query: StudioProjectQuery, label: string): string {
-    // Dates read as recency; everything else reads alphabetically or
-    // numerically, and "newest first" would be wrong for a title.
-    const isDate = query.sort === "updated_at" || query.sort === "created_at";
+    return `Sorted by ${label}, ${sortSuffix(query)}`;
+}
 
-    const suffix = isDate
-        ? query.direction === "desc"
-            ? "newest first"
-            : "oldest first"
-        : query.direction === "desc"
-          ? "descending"
-          : "ascending";
+function sortSuffix(query: StudioProjectQuery): string {
+    const descending = query.direction === "desc";
 
-    return `Sorted by ${label}, ${suffix}`;
+    switch (query.sort) {
+        case "updated_at":
+        case "created_at":
+            return descending ? "newest first" : "oldest first";
+
+        // Naming the two ends of the ladder rather than its direction. Nobody
+        // reads "YouTube, ascending" and pictures unplanned projects.
+        case "youtube_status":
+            return descending ? "published first" : "not planned first";
+
+        default:
+            return descending ? "descending" : "ascending";
+    }
 }

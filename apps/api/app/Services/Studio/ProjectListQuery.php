@@ -8,6 +8,7 @@ use App\Models\Speaker;
 use App\Models\User;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 
 /**
  * The Studio list's dataset query: filtering, searching, sorting, paging.
@@ -62,7 +63,10 @@ class ProjectListQuery
             'audio_duration' => 'column',
             'render_status' => 'column',
             'drive_status' => 'column',
-            'youtube_status' => 'column',
+            // Not a plain column sort: alphabetical order over the enum
+            // ('failed', 'pending', 'published', 'scheduled', …) means
+            // nothing to anybody. See applyYouTubeSort().
+            'youtube_status' => 'youtube',
             'created_at' => 'column',
             'updated_at' => 'column',
         ];
@@ -354,6 +358,7 @@ class ProjectListQuery
 
         match ($columns[$sort]) {
             'relation' => $this->applyRelationSort($query, $sort, $direction),
+            'youtube' => $this->applyYouTubeSort($query, $direction),
             default => $query->orderBy(
                 'content_projects.'.$this->physicalColumn($sort),
                 $direction,
@@ -396,6 +401,71 @@ class ProjectListQuery
                 ? 'content_projects.topic_id is null'
                 : 'content_projects.speaker_id is null')
             ->orderBy($sub, $direction);
+    }
+
+    /**
+     * How far along the road to being on YouTube, and then when.
+     *
+     * Sorting by the raw column put these in alphabetical order — failed,
+     * pending, published, scheduled, uploaded, uploading — which is an order
+     * nobody asked a question in. Ascending here means "least far along
+     * first", so the top of the list is the work not yet done:
+     *
+     *     Not planned    nothing decided; no video, no date
+     *     Planned        a publish time entered, nothing uploaded yet
+     *     Failed         an upload was attempted and did not land
+     *     Uploading      in flight
+     *     Uploaded       on the channel, with no publish time set
+     *     Scheduled      on the channel, waiting for its publish time
+     *     Published      live
+     *
+     * Within a rung, the date decides — which is the other half of the ask,
+     * and the reason youtube_planned_publish_at exists as a column. Whichever
+     * date the project actually has is the one that orders it:
+     *
+     *     publish_at      what YouTube confirmed, for scheduled and published
+     *     uploaded_at     for a video with no publish time of its own
+     *     planned_at      for one that has not been uploaded at all
+     *
+     * The order of that COALESCE matters. Metadata keeps its publish_at after
+     * an upload, so reading the plan before uploaded_at would order a live
+     * video by a date it has already sailed past.
+     *
+     * An enum value nobody has taught this method about sorts last rather
+     * than silently joining "not planned" at the top.
+     *
+     * @param  Builder<ContentProject>  $query
+     */
+    private function applyYouTubeSort(Builder $query, string $direction): void
+    {
+        // Every value here is a constant written in this file. `$direction`
+        // reaches orderBy() as a parameter rather than as string-building, so
+        // nothing from the request is ever concatenated into SQL.
+        $rank = <<<'SQL'
+            case
+                when content_projects.youtube_status = 'pending'
+                     and content_projects.youtube_planned_publish_at is null then 0
+                when content_projects.youtube_status = 'pending' then 1
+                when content_projects.youtube_status = 'failed' then 2
+                when content_projects.youtube_status = 'uploading' then 3
+                when content_projects.youtube_status = 'uploaded' then 4
+                when content_projects.youtube_status = 'scheduled' then 5
+                when content_projects.youtube_status = 'published' then 6
+                else 7
+            end
+            SQL;
+
+        $date = <<<'SQL'
+            coalesce(
+                content_projects.youtube_publish_at,
+                content_projects.youtube_uploaded_at,
+                content_projects.youtube_planned_publish_at
+            )
+            SQL;
+
+        $query
+            ->orderBy(DB::raw($rank), $direction)
+            ->orderBy(DB::raw($date), $direction);
     }
 
     /**
