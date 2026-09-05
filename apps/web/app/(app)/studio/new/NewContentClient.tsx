@@ -20,23 +20,42 @@ import useSWR from "swr";
 import {
     YouTubeCategorySelector,
     YouTubeChannelSummary,
+    YouTubeLanguageSelector,
     YouTubePlaylistSelector,
     useGoogleIntegrations,
 } from "@/components/studio/youtube-selectors";
+import {
+    EMPTY_TITLES,
+    YOUTUBE_TITLE_LIMIT,
+    remaining,
+    setCustom,
+    setSynced,
+    setWorking,
+    youtubeTitle,
+    youtubeTitleForMetadata,
+    type TitleState,
+} from "@/lib/studio/title-sync";
 import type { PrivacyStatus } from "@/lib/types/studio";
 import type { ContentTopic } from "@/lib/types/studio";
 
 /**
- * Step 1 and 2 of the workflow: grouping and speaker.
+ * Everything a project can be told before it has any media.
  *
- * Creating the project early — before any media — is deliberate: uploads are
- * attached to a project, and a half-filled form should not hold a 500 MB file
- * hostage. The remaining steps happen on the project page.
+ * This used to be step one of six, and it collected the grouping and little
+ * else — so the title had to be typed again on the project page, the language
+ * was nowhere, and the speaker sat alone in a card of its own. Every one of
+ * those was a second visit to a decision already made.
+ *
+ * It is one form now. What still cannot live here is the media: an upload is
+ * attached to a project, so the project has to exist before a 500 MB file can
+ * be handed to it — which is also why creating early is right rather than a
+ * compromise. Uploading is the only thing left on the project page for a new
+ * project, and it is the one thing that could not have been decided in advance.
  */
 export default function NewContentClient() {
     const router = useRouter();
 
-    const [workingTitle, setWorkingTitle] = useState("");
+    const [titles, setTitles] = useState(EMPTY_TITLES);
     const [topicId, setTopicId] = useState<string | null>(null);
     const [sequence, setSequence] = useState<string>("");
     const [speakerId, setSpeakerId] = useState<string | null>(null);
@@ -46,6 +65,7 @@ export default function NewContentClient() {
     // with the rest of the grouping rather than remembered later.
     const [playlistId, setPlaylistId] = useState<string | null>(null);
     const [categoryId, setCategoryId] = useState<string | null>(null);
+    const [language, setLanguage] = useState<string | null>(null);
     const [privacy, setPrivacy] = useState<PrivacyStatus>("private");
     const [linkPlaylistToTopic, setLinkPlaylistToTopic] = useState(false);
 
@@ -73,27 +93,40 @@ export default function NewContentClient() {
 
     async function onSubmit(event: React.FormEvent) {
         event.preventDefault();
-        if (!workingTitle.trim()) {
-            toast.error("Give the project a working title.");
+        if (!titles.working.trim()) {
+            toast.error("Give the project a title.");
             return;
         }
 
         setSaving(true);
         try {
-            const project = await createProject({
-                working_title: workingTitle.trim(),
-                topic_id: topicId,
-                topic_sequence: sequence ? Number(sequence) : null,
-                speaker_id: speakerId,
-                // Only send what was actually chosen: an empty metadata block
-                // would overwrite nothing, but sending nulls reads as intent.
-                youtube_metadata: youtubeConnected
+            const publicTitle = youtubeTitleForMetadata(titles);
+
+            const metadata = {
+                // Stored whether or not Google is connected: the title is a
+                // decision about the video rather than about the integration,
+                // and connecting an account later should not mean typing it
+                // again.
+                ...(publicTitle ? { title: publicTitle } : {}),
+                ...(youtubeConnected
                     ? {
                           ...(playlistId ? { playlist_id: playlistId } : {}),
                           ...(categoryId ? { category_id: categoryId } : {}),
+                          ...(language ? { default_language: language } : {}),
                           privacy_status: privacy,
                       }
-                    : undefined,
+                    : {}),
+            };
+
+            const project = await createProject({
+                working_title: titles.working.trim(),
+                topic_id: topicId,
+                topic_sequence: sequence ? Number(sequence) : null,
+                speaker_id: speakerId,
+                // Nothing chosen means nothing sent, so the column stays
+                // null rather than holding an empty object that reads as
+                // "someone considered this and left it blank".
+                youtube_metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
             });
 
             // Opt-in, and only ever widening: choosing a playlist for one video
@@ -105,7 +138,7 @@ export default function NewContentClient() {
                     toast.error("Project created, but the topic's playlist could not be updated.");
                 }
             }
-            toast.success("Project created. Now add the media and title information.");
+            toast.success("Project created. Add the recording and artwork to render it.");
             router.push(`/studio/${project.id}`);
         } catch (error) {
             toast.error(apiErrorMessage(error, "Could not create the project."));
@@ -114,39 +147,26 @@ export default function NewContentClient() {
     }
 
     return (
-        <section className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-10">
+        <section className="mx-auto flex w-full max-w-2xl flex-col gap-6 px-4 py-8">
             <div className="flex flex-col gap-1">
-                <span className="text-xs uppercase tracking-widest text-muted-foreground">
-                    Step 1 of 6
-                </span>
-                <h1 className="text-3xl font-semibold tracking-tight">New content</h1>
-                <p className="text-muted-foreground">
-                    Group the video, then upload media and enter the title information.
+                <h1 className="text-2xl font-semibold tracking-tight">New content</h1>
+                <p className="text-sm text-muted-foreground">
+                    Everything the project can be told up front. Only the recording and artwork
+                    are left for the project page.
                 </p>
             </div>
 
             <form onSubmit={onSubmit} className="flex flex-col gap-6">
                 <Card>
                     <CardHeader>
-                        <CardTitle>Content grouping</CardTitle>
+                        <CardTitle>Content</CardTitle>
                         <CardDescription>
                             The topic becomes the top-left line of the video, and later maps to a
-                            YouTube playlist.
+                            YouTube playlist. The speaker is reused across projects — type it once.
                         </CardDescription>
                     </CardHeader>
                     <CardContent className="flex flex-col gap-4">
-                        <div className="flex flex-col gap-2">
-                            <Label htmlFor="working_title">Working title</Label>
-                            <Input
-                                id="working_title"
-                                placeholder="Kajian Tematik #11 — Part 3"
-                                value={workingTitle}
-                                onChange={(event) => setWorkingTitle(event.target.value)}
-                            />
-                            <p className="text-xs text-muted-foreground">
-                                For your own reference in the studio. Not shown in the video.
-                            </p>
-                        </div>
+                        <TitleFields state={titles} onChange={setTitles} />
 
                         <PlaylistTopicSelector
                             value={selectedTopic ?? null}
@@ -160,31 +180,29 @@ export default function NewContentClient() {
                             }}
                         />
 
-                        <div className="flex flex-col gap-2">
-                            <Label htmlFor="sequence">Topic sequence</Label>
-                            <Input
-                                id="sequence"
-                                type="number"
-                                min={1}
-                                placeholder="11"
-                                value={sequence}
-                                onChange={(event) => setSequence(event.target.value)}
-                            />
-                            <p className="text-xs text-muted-foreground">
-                                Renders as{" "}
-                                <span className="font-mono">TEMA #{sequence || "N"}</span>.
-                            </p>
-                        </div>
-                    </CardContent>
-                </Card>
+                        <div className="grid gap-4 sm:grid-cols-2">
+                            <div className="flex flex-col gap-2">
+                                <Label htmlFor="sequence">Topic sequence</Label>
+                                <Input
+                                    id="sequence"
+                                    type="number"
+                                    min={1}
+                                    placeholder="11"
+                                    value={sequence}
+                                    onChange={(event) => setSequence(event.target.value)}
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                    Renders as{" "}
+                                    <span className="font-mono">TEMA #{sequence || "N"}</span>.
+                                </p>
+                            </div>
 
-                <Card>
-                    <CardHeader>
-                        <CardTitle>Speaker</CardTitle>
-                        <CardDescription>Reused across projects — type it once.</CardDescription>
-                    </CardHeader>
-                    <CardContent>
-                        <SpeakerSelector value={speakerId} onChange={setSpeakerId} />
+                            {/* Merged in from a card of its own. A single
+                                selector never warranted its own heading, and
+                                the speaker is part of what groups a video
+                                exactly as much as the topic is. */}
+                            <SpeakerSelector value={speakerId} onChange={setSpeakerId} />
+                        </div>
                     </CardContent>
                 </Card>
 
@@ -232,10 +250,19 @@ export default function NewContentClient() {
                                     </label>
                                 )}
 
-                                <div className="grid gap-4 sm:grid-cols-2">
+                                {/* Language sits with category and privacy
+                                    because it is the same kind of decision:
+                                    a per-video setting YouTube wants at upload
+                                    time, and one nobody wants to come back for. */}
+                                <div className="grid gap-4 sm:grid-cols-3">
                                     <YouTubeCategorySelector
                                         value={categoryId}
                                         onChange={setCategoryId}
+                                    />
+
+                                    <YouTubeLanguageSelector
+                                        value={language}
+                                        onChange={setLanguage}
                                     />
 
                                     <div className="flex flex-col gap-1.5">
@@ -261,7 +288,7 @@ export default function NewContentClient() {
 
                 <div className="flex gap-3">
                     <Button type="submit" disabled={saving}>
-                        {saving ? "Creating…" : "Create and continue"}
+                        {saving ? "Creating…" : "Create project"}
                     </Button>
                     <Button type="button" variant="ghost" onClick={() => router.push("/studio")}>
                         Cancel
@@ -269,5 +296,106 @@ export default function NewContentClient() {
                 </div>
             </form>
         </section>
+    );
+}
+
+/**
+ * One title, or two when they need to differ.
+ *
+ * The checkbox is on by default because for most videos the internal name and
+ * the public one are the same sentence, and typing it twice is a tax paid on
+ * every project. Unticking reveals the second field already filled in, so
+ * changing one word of a title does not mean retyping it.
+ *
+ * Both boxes stop at YouTube's 100 characters — the working title obeys the
+ * stricter rule too, because while the box is ticked it *is* the YouTube
+ * title, and letting it run longer would make the checkbox quietly untrue.
+ */
+function TitleFields({
+    state,
+    onChange,
+}: {
+    state: TitleState;
+    onChange: (next: TitleState) => void;
+}) {
+    const publicTitle = youtubeTitle(state);
+
+    return (
+        <div className="flex flex-col gap-3">
+            <div className="flex flex-col gap-2">
+                <div className="flex items-baseline justify-between gap-2">
+                    <Label htmlFor="working_title">Title</Label>
+                    <CharacterCount value={state.working} />
+                </div>
+                <Input
+                    id="working_title"
+                    placeholder="Kajian Tematik #11 — Part 3"
+                    value={state.working}
+                    maxLength={YOUTUBE_TITLE_LIMIT}
+                    onChange={(event) => onChange(setWorking(state, event.target.value))}
+                />
+                <p className="text-xs text-muted-foreground">
+                    {state.synced
+                        ? "Used in the Studio and as the YouTube title."
+                        : "Used in the Studio only. Not shown in the video."}
+                </p>
+            </div>
+
+            <label className="flex items-start gap-2 text-sm">
+                <input
+                    type="checkbox"
+                    className="mt-1"
+                    checked={state.synced}
+                    onChange={(event) => onChange(setSynced(state, event.target.checked))}
+                />
+                <span className="text-muted-foreground">
+                    Use this as the YouTube title too. Untick to publish under a different name.
+                </span>
+            </label>
+
+            {!state.synced && (
+                <div className="flex flex-col gap-2">
+                    <div className="flex items-baseline justify-between gap-2">
+                        <Label htmlFor="youtube_title">YouTube title</Label>
+                        <CharacterCount value={state.custom} />
+                    </div>
+                    <Input
+                        id="youtube_title"
+                        placeholder={publicTitle || "Keutamaan Lapar | Kajian Tematik"}
+                        value={state.custom}
+                        maxLength={YOUTUBE_TITLE_LIMIT}
+                        onChange={(event) => onChange(setCustom(state, event.target.value))}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                        What the video is called on YouTube.
+                    </p>
+                </div>
+            )}
+        </div>
+    );
+}
+
+/**
+ * How much room is left.
+ *
+ * Quiet until it matters: a counter reading 87 on every field is noise, but
+ * one that has already turned amber when you reach the end of the sentence
+ * is the difference between editing now and editing after a rejection.
+ */
+function CharacterCount({ value }: { value: string }) {
+    const left = remaining(value);
+
+    if (left > 20) {
+        return null;
+    }
+
+    return (
+        <span
+            className={`text-xs tabular-nums ${
+                left === 0 ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground"
+            }`}
+        >
+            {left} left
+        </span>
     );
 }

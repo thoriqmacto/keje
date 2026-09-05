@@ -73,6 +73,25 @@ export const REQUIRED_COLUMNS: ColumnId[] = ["working_title", "actions"];
 export const MIN_COLUMN_WIDTH = 64;
 export const MAX_COLUMN_WIDTH = 640;
 
+/**
+ * Columns that need more than the general minimum, and why.
+ *
+ * A text column dragged narrow is merely hard to read, and that is the user's
+ * call. A column of controls dragged narrow *loses the controls* — they clip
+ * out of the cell with nothing to say they exist. Actions holds two now
+ * (duplicate, then open), so its floor is what those two occupy.
+ *
+ * Applied on load as well as on resize, so a layout saved when the column
+ * held one button widens itself rather than hiding the new one.
+ */
+export const MIN_WIDTHS: Partial<Record<ColumnId, number>> = {
+    actions: 124,
+};
+
+export function minWidthFor(column: ColumnId): number {
+    return MIN_WIDTHS[column] ?? MIN_COLUMN_WIDTH;
+}
+
 export const DEFAULT_WIDTHS: Partial<Record<ColumnId, number>> = {
     working_title: 280,
     topic: 180,
@@ -84,7 +103,7 @@ export const DEFAULT_WIDTHS: Partial<Record<ColumnId, number>> = {
     updated_at: 150,
     audio_duration: 110,
     created_at: 150,
-    actions: 90,
+    actions: 124,
 };
 
 export const DEFAULT_PREFERENCES: TablePreferences = {
@@ -130,7 +149,7 @@ export function normalizePreferences(
 
     for (const [id, width] of Object.entries(raw.widths ?? {})) {
         if (isKnown(id) && typeof width === "number" && Number.isFinite(width)) {
-            widths[id] = clampWidth(width);
+            widths[id] = clampWidth(width, id);
         }
     }
 
@@ -142,8 +161,10 @@ export function normalizePreferences(
     };
 }
 
-export function clampWidth(width: number): number {
-    return Math.min(MAX_COLUMN_WIDTH, Math.max(MIN_COLUMN_WIDTH, Math.round(width)));
+export function clampWidth(width: number, column?: ColumnId): number {
+    const floor = column === undefined ? MIN_COLUMN_WIDTH : minWidthFor(column);
+
+    return Math.min(MAX_COLUMN_WIDTH, Math.max(floor, Math.round(width)));
 }
 
 /**
@@ -195,7 +216,7 @@ export function setWidth(
     id: ColumnId,
     width: number,
 ): Partial<Record<ColumnId, number>> {
-    return { ...widths, [id]: clampWidth(width) };
+    return { ...widths, [id]: clampWidth(width, id) };
 }
 
 /**

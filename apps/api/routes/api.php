@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\V1\DriveCatalogController;
 use App\Http\Controllers\Api\V1\FinishOutdatedController;
 use App\Http\Controllers\Api\V1\GoogleIntegrationController;
 use App\Http\Controllers\Api\V1\ProjectAudioEditController;
+use App\Http\Controllers\Api\V1\ProjectDuplicateController;
 use App\Http\Controllers\Api\V1\ProjectMediaController;
 use App\Http\Controllers\Api\V1\ProjectPublicationController;
 use App\Http\Controllers\Api\V1\ProjectRenderController;
@@ -114,6 +115,11 @@ Route::prefix('v1')->group(function () {
             ->parameters(['content-projects' => 'project']);
 
         Route::prefix('content-projects/{project}')->group(function () {
+            // Start a new project from this one's description. Copies the
+            // grouping and the YouTube fields; never the media, the render or
+            // anything already on a channel.
+            Route::post('/duplicate', [ProjectDuplicateController::class, 'store']);
+
             // Resolved template layout — drives the browser preview and
             // rejects text that cannot be laid out.
             Route::get('/preview', [ContentProjectController::class, 'preview']);

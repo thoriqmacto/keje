@@ -472,23 +472,45 @@ Adding another template means adding another directory under `resources/media/te
 
 ## The content workflow
 
-1. Create or select a **Topic** (`Riyadhush Shalihin`).
-2. Set the **topic sequence** (`11` → renders as `TEMA #11`). Keje suggests the next free number.
-3. Create or select a **Speaker** (`Syafiq Riza Basalamah`).
-4. Upload the **lecture audio** — the original recording, straight off the recorder.
-5. Upload the **clean background artwork**.
-6. Enter the **primary title** (`Keutamaan Lapar, Hidup`).
-7. Enter the **supporting subtitle**.
-8. Enter the optional **video part** (`3` → `~ PART-3 ~`).
-9. Enter the **YouTube metadata** — separate from the on-screen title.
-10. Review the **Kajian Tematik preview**.
-11. **Render**.
-12. Monitor progress.
-13. Preview and download the MP4.
-14. Back up to Google Drive.
-15. Upload to YouTube, immediately or scheduled.
+**New content** is one form. The title, the topic and its sequence, the speaker, and the YouTube playlist, category, language and privacy are all settled there, in one pass:
 
-Steps 14 and 15 are independent of each other and of the render: a failed Drive backup never invalidates a good render, and rendering never publishes anything on its own.
+1. Enter the **title**. It is the YouTube title too unless you untick the box — see below.
+2. Create or select a **Topic** (`Riyadhush Shalihin`), and set the **topic sequence** (`11` → renders as `TEMA #11`). Keje suggests the next free number.
+3. Create or select a **Speaker** (`Syafiq Riza Basalamah`).
+4. Choose the **YouTube defaults** — playlist, category, video language, privacy.
+
+Then, on the project page:
+
+5. Upload the **lecture audio** — the original recording, straight off the recorder.
+6. Upload the **clean background artwork**.
+7. Enter the **primary title** (`Keutamaan Lapar, Hidup`), **subtitle** and optional **video part** (`3` → `~ PART-3 ~`) — the text drawn on the frame.
+8. Review the **Kajian Tematik preview**.
+9. **Render**, and monitor progress.
+10. Preview and download the MP4.
+11. Back up to Google Drive.
+12. Upload to YouTube, immediately or scheduled.
+
+The last two are independent of each other and of the render: a failed Drive backup never invalidates a good render, and rendering never publishes anything on its own.
+
+**Why the media is not on the create form.** An upload is attached to a project, so the project has to exist before a file can be handed to it. That is also why creating early is right rather than a compromise: a half-filled form should not hold a 500 MB recording hostage while somebody decides on a subtitle.
+
+### One title, two places
+
+A project has a working title — what it is called in the Studio — and a YouTube title, which is what the world sees. For most videos they are the same sentence, so **they start joined**: one field, a checkbox ticked by default, and no reason to type it twice.
+
+Unticking reveals the YouTube title already filled in from the working one, because changing a word of a title should not mean retyping it. Ticking it again is not destructive — what you typed is kept aside and comes back if you untick.
+
+**Both fields stop at YouTube's 100 characters.** The working title obeys the stricter rule too, because while the box is ticked it *is* the YouTube title; letting it run longer would make the checkbox quietly untrue. A counter appears in the last twenty characters rather than sitting there from the first keystroke.
+
+### Duplicate
+
+A series is the same every week apart from the recording, so any project can seed the next one — from its row in the Studio list, or from the project page.
+
+What carries over is everything that describes the **series**: topic, sequence, speaker, template, the drawn title text, the render settings, and the YouTube title, description, tags, category, language, privacy and playlist.
+
+What never carries over is anything describing **one recording**: the audio, the artwork, the render and its output, the Drive backup, the video id and its publication history. A duplicate is a project that has never been rendered or uploaded, and every one of those columns keeps its default. That is the half worth being strict about — a copy that inherited a video id would let the studio believe a brand new project was already published, and every "replace this video" path would then point at the original's live lecture.
+
+Three fields get a deliberate value rather than a copy: the title gains ` (copy)`, the topic sequence takes the topic's **next free number** (two `TEMA #11`s is a rendering bug that only shows up in the finished video), and any **scheduled publish time is dropped** — a schedule names one moment, and that moment belongs to the video already on the channel.
 
 ---
 
@@ -597,6 +619,7 @@ GET    /content-projects/{uuid}             PATCH  /content-projects/{uuid}
 DELETE /content-projects/{uuid}
 
 GET    /content-projects/{uuid}/preview        resolved template layout
+POST   /content-projects/{uuid}/duplicate      201, a new project from this one's description
 POST   /content-projects/{uuid}/audio          ffprobe-validated upload
 POST   /content-projects/{uuid}/background     image-validated upload
 GET    /content-projects/{uuid}/background     artwork, for the preview

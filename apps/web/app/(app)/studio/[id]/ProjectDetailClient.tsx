@@ -39,6 +39,7 @@ import { ThumbnailPicker } from "@/components/studio/thumbnail-picker";
 import { useDocumentTitle } from "@/lib/use-document-title";
 import {
     apiErrorMessage,
+    duplicateProject,
     backupToDrive,
     deleteProject,
     getPreview,
@@ -198,6 +199,26 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
             await Promise.all([mutate(), render.mutate()]);
         } catch (error) {
             toast.error(apiErrorMessage(error, "Could not queue the render."));
+        }
+    }
+
+    const [duplicating, setDuplicating] = useState(false);
+
+    /**
+     * Start a new project from this one.
+     *
+     * The server decides what carries over — copying it here would be one
+     * forgotten field away from a new project claiming this one's video id.
+     */
+    async function onDuplicate() {
+        setDuplicating(true);
+        try {
+            const copy = await duplicateProject(projectId);
+            toast.success("Copied. Add the recording to render it.");
+            router.push(`/studio/${copy.id}`);
+        } catch (error) {
+            toast.error(apiErrorMessage(error, "Could not duplicate the project."));
+            setDuplicating(false);
         }
     }
 
@@ -589,6 +610,26 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                             }
                         }}
                     />
+
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Start the next one from this</CardTitle>
+                            <CardDescription>
+                                Copies the grouping, the titles and the YouTube fields into a new
+                                project. Never the recording, the render, or anything already on
+                                YouTube or Drive.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <Button
+                                variant="outline"
+                                disabled={duplicating}
+                                onClick={() => void onDuplicate()}
+                            >
+                                {duplicating ? "Duplicating…" : "Duplicate project"}
+                            </Button>
+                        </CardContent>
+                    </Card>
 
                     <Card>
                         <CardHeader>

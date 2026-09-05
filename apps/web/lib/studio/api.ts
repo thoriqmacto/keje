@@ -154,6 +154,20 @@ export async function createProject(input: ProjectInput): Promise<ContentProject
 }
 
 /**
+ * Start a new project from an existing one's description.
+ *
+ * The server decides what carries over, and deliberately so: "copy the
+ * grouping and the YouTube fields, never the media or anything already on a
+ * channel" is a rule about the domain, and a client assembling its own copy
+ * would be one forgotten field away from a new project claiming a published
+ * video id.
+ */
+export async function duplicateProject(id: string): Promise<ContentProject> {
+    const { data } = await api.post<{ data: ContentProject }>(`/content-projects/${id}/duplicate`);
+    return data.data;
+}
+
+/**
  * Save the removed sections.
  *
  * Non-destructive: the uploaded recording is untouched, so this is cheap to

@@ -2,12 +2,16 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { Copy } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ProjectStatusBadge } from "@/components/studio/status-badge";
 import { ColumnHeader } from "@/components/studio/data-table/column-header";
 import { HeaderFilterCell } from "@/components/studio/data-table/header-filters";
 import { COLUMN_LABELS } from "@/components/studio/data-table/toolbar";
 import { formatDateTime, formatDuration } from "@/lib/studio/format";
+import { apiErrorMessage, duplicateProject } from "@/lib/studio/api";
 import {
     youtubeBadgeLabel,
     youtubeBadgeStatus,
@@ -16,6 +20,7 @@ import {
 } from "@/lib/studio/youtube-badge";
 import {
     moveColumn,
+    setWidth,
     visibleColumns,
     type ColumnId,
     type TablePreferences,
@@ -159,10 +164,14 @@ export function StudioTable({
                                 onDragStart={setDragging}
                                 onDragOver={setDropTarget}
                                 onDrop={handleDrop}
+                                // Through setWidth so the drag obeys the same
+                                // floor the stored layout does — otherwise a
+                                // column of controls can be dragged narrower
+                                // than its controls and lose them until reload.
                                 onResize={(id, width) =>
                                     onPreferencesChange({
                                         ...preferences,
-                                        widths: { ...preferences.widths, [id]: width },
+                                        widths: setWidth(preferences.widths, id, width),
                                     })
                                 }
                                 isDragging={dragging === column}
@@ -323,9 +332,12 @@ function Cell({ column, project }: { column: ColumnId; project: ContentProjectSu
 
         case "actions":
             return (
-                <Button asChild size="sm" variant="outline">
-                    <Link href={`/studio/${project.id}`}>Open</Link>
-                </Button>
+                <div className="flex items-center justify-end gap-1">
+                    <DuplicateButton project={project} />
+                    <Button asChild size="sm" variant="outline">
+                        <Link href={`/studio/${project.id}`}>Open</Link>
+                    </Button>
+                </div>
             );
     }
 }
@@ -370,5 +382,47 @@ function YouTubeCell({ project }: { project: ContentProjectSummary }) {
                 </span>
             )}
         </span>
+    );
+}
+
+/**
+ * Start the next one from this one.
+ *
+ * A series is the same every week apart from the recording, so the row you are
+ * looking at is usually the best starting point for the next episode. The
+ * server decides what carries over; this only asks.
+ *
+ * An icon rather than a word: the column is narrow, Open is the primary action
+ * and should stay the wide one, and a second full-width button beside it would
+ * make every row read as a choice between two equals.
+ */
+function DuplicateButton({ project }: { project: ContentProjectSummary }) {
+    const router = useRouter();
+    const [busy, setBusy] = useState(false);
+
+    async function onClick() {
+        setBusy(true);
+        try {
+            const copy = await duplicateProject(project.id);
+            toast.success("Copied. Add the recording to render it.");
+            router.push(`/studio/${copy.id}`);
+        } catch (error) {
+            toast.error(apiErrorMessage(error, "Could not duplicate the project."));
+            setBusy(false);
+        }
+    }
+
+    return (
+        <Button
+            size="sm"
+            variant="ghost"
+            className="h-8 px-2"
+            disabled={busy}
+            aria-label={`Duplicate ${project.working_title}`}
+            title="Duplicate"
+            onClick={() => void onClick()}
+        >
+            <Copy aria-hidden className="size-3.5" />
+        </Button>
     );
 }

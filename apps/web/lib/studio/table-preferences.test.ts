@@ -8,6 +8,7 @@ import {
     type ColumnId,
     clampWidth,
     loadPreferences,
+    minWidthFor,
     moveColumn,
     normalizePreferences,
     savePreferences,
@@ -222,4 +223,30 @@ test("corrupt JSON in storage yields the defaults", () => {
     const storage = fakeStorage({ "keje:studio-table:v1": "{ not json" });
 
     assert.deepEqual(loadPreferences(storage), DEFAULT_PREFERENCES);
+});
+
+// ── Per-column minimum widths ───────────────────────────────────────────────
+
+test("a column of controls has a higher floor than a column of text", () => {
+    // Dragging a text column narrow is merely hard to read. Dragging the
+    // actions column narrow loses the buttons, with nothing to say they exist.
+    assert.equal(clampWidth(20, "topic"), MIN_COLUMN_WIDTH);
+    assert.equal(clampWidth(20, "actions"), minWidthFor("actions"));
+    assert.ok(minWidthFor("actions") > MIN_COLUMN_WIDTH);
+});
+
+test("a layout saved when actions held one button widens itself", () => {
+    // The upgrade path: stored widths are re-clamped on load, so nobody has to
+    // notice a clipped button and drag the column themselves.
+    const stored = normalizePreferences({ widths: { actions: 90 } });
+
+    assert.equal(stored.widths.actions, minWidthFor("actions"));
+});
+
+test("a width above the floor is left alone", () => {
+    assert.equal(normalizePreferences({ widths: { actions: 200 } }).widths.actions, 200);
+});
+
+test("resizing obeys the same floor as loading", () => {
+    assert.equal(setWidth({}, "actions", 30).actions, minWidthFor("actions"));
 });
