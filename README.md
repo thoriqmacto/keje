@@ -867,6 +867,42 @@ The Studio table has three kinds of state, and they are deliberately separate.
 
 Saving is explicit — **View → Save current view as default**. Filtering once to find a project never silently redefines how the page opens. **Restore my default view** brings it back, and **Forget my default view** returns to Keje's own (Updated, newest first).
 
+### Sorting by YouTube
+
+Every other column sorts the obvious way. YouTube cannot: its column holds an
+enum, and ordering by the stored string gives *failed, pending, published,
+scheduled, uploaded, uploading* — alphabetical order, which answers no question
+anybody has.
+
+Ascending means **least far along first**, so the top of the list is the work
+still to do:
+
+| | |
+|---|---|
+| Not planned | no video, no date, nothing decided |
+| Planned | a publish time entered; nothing uploaded yet |
+| Failed | an upload was attempted and did not land |
+| Uploading | in flight |
+| Uploaded | on the channel, no publish time set |
+| Scheduled | on the channel, waiting for its publish time |
+| Published | live |
+
+**Within a rung the date decides**, and it is whichever date the project
+actually has: the publish time YouTube confirmed, else the upload time, else
+the time it is planned for. That order matters — metadata keeps its
+`publish_at` after an upload, so reading the plan first would sort a video
+published in June by a plan for next March.
+
+Ordering by the planned time is why `youtube_planned_publish_at` is a column
+rather than a lookup into the `youtube_metadata` JSON. Extracting it in the
+ORDER BY means comparing `'2026-12-01T09:00:00Z'` against the real DATETIME
+columns beside it — a space sorts before a T, so every confirmed timestamp
+would sort before every planned one whatever the dates said, and casting the
+string back is where MariaDB and SQLite stop agreeing. `ContentProjectObserver`
+keeps the column in step; the migration backfills what was already stored. The
+list reads the same column it sorts by, so the date on a row and its position
+cannot disagree.
+
 ### Filtering in two places
 
 The toolbar and the row of filters under the column headers are two surfaces onto **one** query. Changing either updates the URL, the chips and the other surface — there is no second filter state to get out of step.

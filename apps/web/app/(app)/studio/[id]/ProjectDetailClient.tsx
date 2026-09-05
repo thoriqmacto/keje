@@ -213,7 +213,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
 
     if (isLoading || !project) {
         return (
-            <div className="mx-auto w-full max-w-6xl px-4 py-10 text-sm text-muted-foreground">
+            <div className="mx-auto w-full max-w-[84rem] px-4 py-8 text-sm text-muted-foreground">
                 Loading…
             </div>
         );
@@ -222,7 +222,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     const inFlight = renderStatus === "queued" || renderStatus === "rendering";
 
     return (
-        <section className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 py-10">
+        <section className="mx-auto flex w-full max-w-[84rem] flex-col gap-6 px-4 py-8">
             <div className="flex flex-wrap items-start justify-between gap-4">
                 <div className="flex flex-col gap-1">
                     <Link href="/studio" className="text-xs text-muted-foreground hover:underline">
@@ -256,8 +256,29 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                 </div>
             </div>
 
-            <div className="grid gap-6 lg:grid-cols-[1.15fr_1fr]">
-                {/* ── Preview ────────────────────────────────────────────── */}
+            {/*
+                Two columns that mean something, rather than "the preview" and
+                "everything else".
+
+                That was the old split, and on a wide screen it read as a short
+                left column against seven stacked cards on the right — the
+                preview and the render sat alone while every form queued up
+                beside them. The imbalance was not a spacing problem; the
+                columns were not answering comparable questions.
+
+                They are cut by what a card *does* now. Left is everything that
+                decides what the video looks like — its artwork and audio, its
+                grouping, the words drawn on the frame — with the preview at the
+                top of them, where a change to any of it shows up. Right is
+                everything that happens to the video once it exists: render it,
+                describe it for YouTube, back it up, publish it, or delete it.
+
+                Reading down either column is a coherent job, and the two are
+                close enough in length that neither runs out from under the
+                other.
+            */}
+            <div className="grid items-start gap-6 lg:grid-cols-2">
+                {/* ── What the video is made of ──────────────────────────── */}
                 <div className="flex flex-col gap-4">
                     <Card>
                         <CardHeader>
@@ -283,6 +304,108 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                         </CardContent>
                     </Card>
 
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Media</CardTitle>
+                            <CardDescription>
+                                Upload the original recording — no Audacity step needed. The
+                                background should be clean artwork with no title text.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent className="flex flex-col gap-4">
+                            <MediaUploader
+                                label="Lecture audio"
+                                accept=".mp3,.mpeg,.mpg,.m4a,.wav,.aac,audio/*"
+                                hint="MP3, MPEG, M4A, WAV or AAC."
+                                detected={audioDetails(project)}
+                                onUpload={async (file, onProgress) => {
+                                    const updated = await uploadAudio(projectId, file, onProgress);
+                                    await mutate();
+                                    return updated;
+                                }}
+                            />
+                            <MediaUploader
+                                label="Background image"
+                                accept=".jpg,.jpeg,.png,.webp,image/*"
+                                hint="JPG, PNG or WebP. Cropped to fill 1280×720."
+                                detected={backgroundDetails(project)}
+                                onUpload={async (file, onProgress) => {
+                                    const updated = await uploadBackground(
+                                        projectId,
+                                        file,
+                                        onProgress,
+                                    );
+                                    await mutate();
+                                    return updated;
+                                }}
+                            />
+                        </CardContent>
+                    </Card>
+
+                    {/* Editable for the project's whole life. A project
+                        created without a speaker used to be stuck that way,
+                        which is what showed as "—" in the Studio list. */}
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Project properties</CardTitle>
+                            <CardDescription>
+                                Grouping and attribution. Changing the topic, TEMA or speaker
+                                changes the video, so it will need rendering again.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <ProjectPropertiesCard project={project} onSaved={() => void mutate()} />
+                        </CardContent>
+                    </Card>
+
+                    {project.source_audio?.stored && (
+                        <Card>
+                            <CardHeader>
+                                <CardTitle>Audio editing</CardTitle>
+                                <CardDescription>
+                                    Remove sections you do not want. The uploaded recording is
+                                    never changed — the cuts are applied when it renders.
+                                </CardDescription>
+                            </CardHeader>
+                            <CardContent>
+                                <AudioEditorCard
+                                    project={project}
+                                    audioUrl={links?.audio_url ?? null}
+                                    onSaved={() => void mutate()}
+                                />
+                            </CardContent>
+                        </Card>
+                    )}
+
+                    <Card>
+                        <CardHeader>
+                            <CardTitle>Kajian Tematik title</CardTitle>
+                            <CardDescription>
+                                Type in normal case — the template uppercases it.
+                            </CardDescription>
+                        </CardHeader>
+                        <CardContent>
+                            <TemplateTextForm
+                                primaryTitle={primaryTitle}
+                                subtitle={subtitle}
+                                partNumber={partNumber}
+                                layoutError={layoutMessage}
+                                saving={savingText}
+                                onChange={(patch) => {
+                                    if (patch.primaryTitle !== undefined)
+                                        setPrimaryTitle(patch.primaryTitle);
+                                    if (patch.subtitle !== undefined) setSubtitle(patch.subtitle);
+                                    if (patch.partNumber !== undefined)
+                                        setPartNumber(patch.partNumber);
+                                }}
+                                onSave={() => void saveText()}
+                            />
+                        </CardContent>
+                    </Card>
+                </div>
+
+                {/* ── What happens to it once it exists ──────────────────── */}
+                <div className="flex flex-col gap-4">
                     {/* ── Render ─────────────────────────────────────────── */}
                     <Card>
                         <CardHeader>
@@ -410,108 +533,6 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                                     src={links.video_url}
                                 />
                             )}
-                        </CardContent>
-                    </Card>
-                </div>
-
-                {/* ── Editing ────────────────────────────────────────────── */}
-                <div className="flex flex-col gap-4">
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Media</CardTitle>
-                            <CardDescription>
-                                Upload the original recording — no Audacity step needed. The
-                                background should be clean artwork with no title text.
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent className="flex flex-col gap-4">
-                            <MediaUploader
-                                label="Lecture audio"
-                                accept=".mp3,.mpeg,.mpg,.m4a,.wav,.aac,audio/*"
-                                hint="MP3, MPEG, M4A, WAV or AAC."
-                                detected={audioDetails(project)}
-                                onUpload={async (file, onProgress) => {
-                                    const updated = await uploadAudio(projectId, file, onProgress);
-                                    await mutate();
-                                    return updated;
-                                }}
-                            />
-                            <MediaUploader
-                                label="Background image"
-                                accept=".jpg,.jpeg,.png,.webp,image/*"
-                                hint="JPG, PNG or WebP. Cropped to fill 1280×720."
-                                detected={backgroundDetails(project)}
-                                onUpload={async (file, onProgress) => {
-                                    const updated = await uploadBackground(
-                                        projectId,
-                                        file,
-                                        onProgress,
-                                    );
-                                    await mutate();
-                                    return updated;
-                                }}
-                            />
-                        </CardContent>
-                    </Card>
-
-                    {/* Editable for the project's whole life. A project
-                        created without a speaker used to be stuck that way,
-                        which is what showed as "—" in the Studio list. */}
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Project properties</CardTitle>
-                            <CardDescription>
-                                Grouping and attribution. Changing the topic, TEMA or speaker
-                                changes the video, so it will need rendering again.
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                            <ProjectPropertiesCard project={project} onSaved={() => void mutate()} />
-                        </CardContent>
-                    </Card>
-
-                    {project.source_audio?.stored && (
-                        <Card>
-                            <CardHeader>
-                                <CardTitle>Audio editing</CardTitle>
-                                <CardDescription>
-                                    Remove sections you do not want. The uploaded recording is
-                                    never changed — the cuts are applied when it renders.
-                                </CardDescription>
-                            </CardHeader>
-                            <CardContent>
-                                <AudioEditorCard
-                                    project={project}
-                                    audioUrl={links?.audio_url ?? null}
-                                    onSaved={() => void mutate()}
-                                />
-                            </CardContent>
-                        </Card>
-                    )}
-
-                    <Card>
-                        <CardHeader>
-                            <CardTitle>Kajian Tematik title</CardTitle>
-                            <CardDescription>
-                                Type in normal case — the template uppercases it.
-                            </CardDescription>
-                        </CardHeader>
-                        <CardContent>
-                            <TemplateTextForm
-                                primaryTitle={primaryTitle}
-                                subtitle={subtitle}
-                                partNumber={partNumber}
-                                layoutError={layoutMessage}
-                                saving={savingText}
-                                onChange={(patch) => {
-                                    if (patch.primaryTitle !== undefined)
-                                        setPrimaryTitle(patch.primaryTitle);
-                                    if (patch.subtitle !== undefined) setSubtitle(patch.subtitle);
-                                    if (patch.partNumber !== undefined)
-                                        setPartNumber(patch.partNumber);
-                                }}
-                                onSave={() => void saveText()}
-                            />
                         </CardContent>
                     </Card>
 

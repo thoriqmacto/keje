@@ -77,10 +77,14 @@ class ContentProjectSummaryResource extends JsonResource
                  * metadata keeps its publish_at after the upload, so a live
                  * video would otherwise go on advertising a publication that
                  * has already happened — or worse, one that never will.
+                 *
+                 * Read from the column the observer maintains rather than
+                 * parsed from the JSON again, so the date this row shows is
+                 * by construction the same value the list sorted it by.
                  */
                 'planned_publish_at' => $this->youtube_status->hasVideo()
                     ? null
-                    : $this->plannedPublishAt()?->toIso8601String(),
+                    : $this->youtube_planned_publish_at?->toIso8601String(),
 
                 // The list shows what YouTube says now, so a video that has
                 // since published stops claiming to be scheduled.
