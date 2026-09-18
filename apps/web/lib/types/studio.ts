@@ -64,6 +64,27 @@ export type YouTubeMetadata = {
     notify_subscribers?: boolean | null;
 };
 
+/**
+ * A recording already on the server, offered for reuse.
+ *
+ * Identified by the *project* that holds it, because that is what the reuse
+ * endpoint accepts — there is deliberately no file identifier here, and no
+ * path. Only projects whose bytes are still present appear: pruning nulls the
+ * path while keeping the name and duration, so a project can describe a
+ * recording long after the file itself was reclaimed.
+ */
+export type AudioSource = {
+    id: string;
+    working_title: string;
+    topic: string | null;
+    original_name: string | null;
+    mime: string | null;
+    size: number | null;
+    duration: number | null;
+    codec: string | null;
+    updated_at: string | null;
+};
+
 export type ContentProjectSummary = {
     id: string;
     working_title: string;

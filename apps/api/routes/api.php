@@ -99,6 +99,11 @@ Route::prefix('v1')->group(function () {
         // not swallowed by the {project} parameter.
         Route::get('content-projects/stats', [ContentProjectController::class, 'stats']);
 
+        // Recordings already on this server, for reuse in another project.
+        // Declared before the resource routes so {project} does not
+        // swallow the literal segment.
+        Route::get('content-projects/audio-sources', [ProjectMediaController::class, 'audioSources']);
+
         /*
          * Bulk re-render of the outdated projects in a Studio view. Takes the
          * same query string the list does, so the scope is the filtered
@@ -126,6 +131,10 @@ Route::prefix('v1')->group(function () {
 
             // Source media. ffprobe validates these, not the file extension.
             Route::post('/audio', [ProjectMediaController::class, 'storeAudio']);
+
+            // The same recording as another project, copied in. Names a
+            // project, never a path — see ReuseProjectAudioRequest.
+            Route::post('/audio/reuse', [ProjectMediaController::class, 'reuseAudio']);
 
             // Removed sections. Non-destructive: the uploaded recording is
             // never rewritten, so this only records decisions.
