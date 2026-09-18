@@ -20,12 +20,26 @@ export function MediaUploader({
     hint,
     detected,
     onUpload,
+    action,
+    panel,
 }: {
     label: string;
     accept: string;
     hint: string;
     detected: { name: string | null; rows: [string, string][] } | null;
     onUpload: (file: File, onProgress: (percent: number) => void) => Promise<ContentProject>;
+    /**
+     * Another way to fill this slot, beside the file picker.
+     *
+     * A slot rather than a built-in option because only the recording has one:
+     * artwork is small and specific to a video, while a lecture is large and
+     * often serves several. Rendering it here keeps both routes to the same
+     * outcome in the same place, where somebody looking for one will see the
+     * other.
+     */
+    action?: React.ReactNode;
+    /** Whatever `action` opens, given the full width of the card. */
+    panel?: React.ReactNode;
 }) {
     const input = useRef<HTMLInputElement>(null);
     const [uploading, setUploading] = useState(false);
@@ -54,16 +68,21 @@ export function MediaUploader({
                     <Label>{label}</Label>
                     <p className="mt-1 text-xs text-muted-foreground">{hint}</p>
                 </div>
-                <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={uploading}
-                    onClick={() => input.current?.click()}
-                >
-                    {uploading ? "Uploading…" : detected ? "Replace" : "Choose file"}
-                </Button>
+                <div className="flex shrink-0 items-center gap-1">
+                    {action}
+                    <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        disabled={uploading}
+                        onClick={() => input.current?.click()}
+                    >
+                        {uploading ? "Uploading…" : detected ? "Replace" : "Upload"}
+                    </Button>
+                </div>
             </div>
+
+            {panel}
 
             <input
                 ref={input}

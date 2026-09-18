@@ -19,6 +19,10 @@ import {
     audioDetails,
     backgroundDetails,
 } from "@/components/studio/media-uploader";
+import {
+    AudioSourceButton,
+    AudioSourceList,
+} from "@/components/studio/audio-source-picker";
 import { RenderProgress, useRenderStatus } from "@/components/studio/render-progress";
 import { ProjectStatusBadge } from "@/components/studio/status-badge";
 import { TemplateTextForm } from "@/components/studio/template-text-form";
@@ -203,6 +207,7 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
     }
 
     const [duplicating, setDuplicating] = useState(false);
+    const [reusingAudio, setReusingAudio] = useState(false);
 
     /**
      * Start a new project from this one.
@@ -337,13 +342,34 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                             <MediaUploader
                                 label="Lecture audio"
                                 accept=".mp3,.mpeg,.mpg,.m4a,.wav,.aac,audio/*"
-                                hint="MP3, MPEG, M4A, WAV or AAC."
+                                hint="MP3, MPEG, M4A, WAV or AAC — upload one, or reuse a recording already on the server."
                                 detected={audioDetails(project)}
                                 onUpload={async (file, onProgress) => {
                                     const updated = await uploadAudio(projectId, file, onProgress);
                                     await mutate();
                                     return updated;
                                 }}
+                                // One lecture often becomes several videos, each
+                                // trimmed differently. Re-uploading half a
+                                // gigabyte to say "that one again" is the thing
+                                // this avoids.
+                                action={
+                                    <AudioSourceButton
+                                        open={reusingAudio}
+                                        onOpenChange={setReusingAudio}
+                                    />
+                                }
+                                panel={
+                                    reusingAudio ? (
+                                        <AudioSourceList
+                                            projectId={projectId}
+                                            onReused={() => {
+                                                setReusingAudio(false);
+                                                void mutate();
+                                            }}
+                                        />
+                                    ) : null
+                                }
                             />
                             <MediaUploader
                                 label="Background image"

@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Api\V1;
 use App\Enums\RenderStatus;
 use App\Exceptions\Media\UnusableMediaException;
 use App\Http\Controllers\Controller;
+use App\Http\Requests\Api\V1\ReuseProjectAudioRequest;
 use App\Http\Requests\Api\V1\UploadProjectAudioRequest;
 use App\Http\Requests\Api\V1\UploadProjectBackgroundRequest;
+use App\Http\Resources\Api\V1\AudioSourceResource;
 use App\Http\Resources\Api\V1\ContentProjectResource;
 use App\Models\ContentProject;
 use App\Services\Media\FfprobeService;
@@ -71,6 +73,108 @@ class ProjectMediaController extends Controller
             'source_audio_bitrate' => $probe['bitrate'],
         ]);
 
+        $this->clearStaleCuts($project);
+        $this->promoteToMediaReady($project);
+
+        return response()->json([
+            'data' => new ContentProjectResource($project->load(['topic', 'speaker'])),
+        ]);
+    }
+
+    /**
+     * Recordings already on this server, offered for reuse.
+     *
+     * One lecture often becomes several videos — the same three hours trimmed
+     * three different ways — and re-uploading half a gigabyte for each of them
+     * is a slow way to say "the same one again".
+     *
+     * Only projects whose bytes are actually still here: pruning nulls the
+     * path while keeping the descriptive columns, so a project can remember
+     * its recording's name and duration long after the file itself was
+     * reclaimed. Offering one of those would be offering a file that is gone.
+     */
+    public function audioSources(Request $request): JsonResponse
+    {
+        $sources = ContentProject::query()
+            ->where('user_id', $request->user()->id)
+            ->whereNotNull('source_audio_path')
+            ->with('topic')
+            ->orderByDesc('updated_at')
+            ->orderByDesc('id')
+            ->limit(100)
+            ->get();
+
+        return response()->json(['data' => AudioSourceResource::collection($sources)]);
+    }
+
+    /**
+     * Use another project's recording here, by copying it.
+     *
+     * Copied rather than shared — see MediaStorage::copyAudioFrom() for why a
+     * shared path would turn this project's prune into that project's data
+     * loss. The trims are not copied with it: two projects reusing one lecture
+     * is exactly the case where each wants a different section, so this lands
+     * as the whole recording with nothing removed.
+     *
+     * Re-probed rather than trusted. The metadata could simply be copied from
+     * the row, and it would nearly always be right — but "trust ffprobe, not
+     * what something else recorded earlier" is the rule everywhere else here,
+     * and reading the new copy is also the only honest proof it arrived.
+     */
+    public function reuseAudio(ReuseProjectAudioRequest $request, ContentProject $project): JsonResponse
+    {
+        abort_unless($request->user()->can('update', $project), 404);
+
+        $source = ContentProject::query()
+            ->where('user_id', $request->user()->id)
+            ->where('uuid', $request->validated('source_project_id'))
+            ->firstOrFail();
+
+        // Copying a project onto itself would delete the file in the first
+        // step and then copy from the hole it left. The only way to lose a
+        // recording through this endpoint, and it is closed here.
+        if ($source->is($project)) {
+            throw ValidationException::withMessages([
+                'source_project_id' => ['That is this project\'s own recording.'],
+            ]);
+        }
+
+        if (blank($source->source_audio_path)
+            || ! is_file($this->storage->path($source->source_audio_path))) {
+            throw ValidationException::withMessages([
+                'source_project_id' => ['That recording is no longer on the server.'],
+            ]);
+        }
+
+        $stored = $this->storage->copyAudioFrom($project, $source);
+
+        try {
+            $probe = $this->ffprobe->inspectAudio($this->storage->path($stored['path']));
+        } catch (Throwable $e) {
+            // Same contract as an upload: a copy that turns out unusable
+            // leaves no file behind.
+            Storage::disk('local')->delete($stored['path']);
+
+            throw $e instanceof UnusableMediaException
+                ? ValidationException::withMessages(['source_project_id' => [$e->getMessage()]])
+                : $e;
+        }
+
+        $project->forceFill([
+            'source_audio_path' => $stored['path'],
+            // The name the file was uploaded under, so the copy is
+            // recognisable as the same recording rather than as "audio.mp3".
+            'source_audio_original_name' => $source->source_audio_original_name,
+            'source_audio_mime' => $source->source_audio_mime,
+            'source_audio_size' => Storage::disk('local')->size($stored['path']),
+            'source_audio_duration' => $probe['duration'],
+            'source_audio_codec' => $probe['codec'],
+            'source_audio_sample_rate' => $probe['sample_rate'],
+            'source_audio_channels' => $probe['channels'],
+            'source_audio_bitrate' => $probe['bitrate'],
+        ]);
+
+        $this->clearStaleCuts($project);
         $this->promoteToMediaReady($project);
 
         return response()->json([
@@ -142,6 +246,24 @@ class ProjectMediaController extends Controller
         return response()->json([
             'data' => new ContentProjectResource($project->load(['topic', 'speaker'])),
         ]);
+    }
+
+    /**
+     * A new recording means the old cut marks describe nothing.
+     *
+     * Cuts are stored as absolute timestamps into the recording, and nothing
+     * ties them to the file they were drawn against. Left in place across a
+     * replacement they quietly apply to the new timeline instead — removing
+     * ninety seconds from somewhere nobody chose, in a video that renders
+     * without complaint and is simply wrong.
+     *
+     * Clearing them costs the work of marking them again, which is minutes
+     * and is visible. Keeping them costs a bad render that looks fine until
+     * somebody watches it.
+     */
+    private function clearStaleCuts(ContentProject $project): void
+    {
+        $project->audio_edits = null;
     }
 
     /**

@@ -1,6 +1,7 @@
 import { AxiosError } from "axios";
 import { api } from "@/lib/api";
 import type {
+    AudioSource,
     ContentProject,
     ContentProjectSummary,
     ContentTopic,
@@ -49,6 +50,7 @@ export const studioKeys = {
     google: "studio:google",
     stats: "studio:stats",
     storage: "studio:storage",
+    audioSources: "studio:audio-sources",
     /*
      * Keyed by the serialised query, so each distinct view is cached
      * separately. That is what lets SWR hold the previous page on screen
@@ -202,6 +204,27 @@ export async function uploadAudio(
     onProgress?: (percent: number) => void,
 ): Promise<ContentProject> {
     return uploadFile(`/content-projects/${id}/audio`, "audio", file, onProgress);
+}
+
+/**
+ * Recordings already on the server, offered for reuse.
+ *
+ * Describes each choice by the project that holds it — there is no file
+ * identifier in this payload, because the endpoint that consumes it takes a
+ * project and reads that project's own stored path.
+ */
+export async function listAudioSources(): Promise<AudioSource[]> {
+    const { data } = await api.get<{ data: AudioSource[] }>("/content-projects/audio-sources");
+    return data.data;
+}
+
+/** Copy another project's recording into this one. Names a project, never a path. */
+export async function reuseAudio(id: string, sourceProjectId: string): Promise<ContentProject> {
+    const { data } = await api.post<{ data: ContentProject }>(
+        `/content-projects/${id}/audio/reuse`,
+        { source_project_id: sourceProjectId },
+    );
+    return data.data;
 }
 
 export async function uploadBackground(

@@ -516,6 +516,24 @@ Three fields get a deliberate value rather than a copy: the title gains ` (copy)
 
 ## Media pipeline
 
+### Reusing a recording
+
+One lecture often becomes several videos — the same three hours trimmed three different ways — so the audio slot offers **Use existing** beside **Upload**. It lists every project of yours whose recording is still on the server, and copies the one you pick into this project.
+
+**It copies rather than sharing the file, and that is the whole design.** Everything else here assumes a project owns the files under its own directory: deleting a project removes that directory outright, the retention pruner frees a project's sources once its render is backed up, and the storage inventory attributes bytes by directory. A second project pointing at the first one's file would turn every one of those into a way to delete a recording somebody is still using. The cost is disk — two projects trimming one lecture hold two copies — which the Storage page can see and the pruner can reclaim. That is the better failure mode than a dangling path, and the panel says so before you pick.
+
+**The browser names a project, never a file.** This is the one feature in the studio that could plausibly have been built as "tell the server which file to use". It is not: the picker sends a project UUID, the server looks it up scoped to the caller and reads that project's own stored path. There is no file identifier in the payload at all, and a test asserts no path, no `content/` prefix and no `storage_path()` appears in the listing.
+
+The copy arrives **whole, with nothing trimmed** — two projects reusing one lecture is exactly the case where each wants a different section. Its facts are re-probed from the copy rather than carried across from the row, on the same principle as an upload: trust ffprobe.
+
+A recording whose bytes have been pruned is not offered. Pruning nulls the path and keeps the name and duration, so a project can describe a recording long after the file is gone; offering one would be offering nothing.
+
+### Changing the recording clears the cuts
+
+Whenever a project's recording changes — uploaded or reused — its cut marks are cleared.
+
+Cuts are absolute timestamps into the recording, and nothing ties them to the file they were drawn against. Left in place across a replacement they apply to the *new* timeline instead, removing ninety seconds from somewhere nobody chose, in a video that renders without complaint and is simply wrong. Marking them again costs minutes and is visible; the alternative costs a bad render that looks fine until somebody watches it.
+
 **Audio in** — `.mp3`, `.mpeg`, `.mpg`, `.m4a`, `.wav`, `.aac`. The extension and the browser's MIME type are treated as claims only: **ffprobe** decides whether a file is usable, and reports codec, duration, sample rate, channels and bitrate. A file with no audio stream is rejected and deleted. An MPEG carrying both video and audio is accepted — the first audio stream is used.
 
 **Background in** — `.jpg`, `.jpeg`, `.png`, `.webp`, verified as a real image and measured. Scaled to **cover** 1280×720 and centre-cropped, preserving aspect ratio. Images are never stretched, and the uploaded file is never modified — the readability gradient exists only during the render.
@@ -621,6 +639,8 @@ DELETE /content-projects/{uuid}
 GET    /content-projects/{uuid}/preview        resolved template layout
 POST   /content-projects/{uuid}/duplicate      201, a new project from this one's description
 POST   /content-projects/{uuid}/audio          ffprobe-validated upload
+POST   /content-projects/{uuid}/audio/reuse    copy another project's recording in
+GET    /content-projects/audio-sources         recordings still on the server
 POST   /content-projects/{uuid}/background     image-validated upload
 GET    /content-projects/{uuid}/background     artwork, for the preview
 
