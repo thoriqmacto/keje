@@ -6,6 +6,7 @@ use App\Enums\GoogleService;
 use App\Http\Controllers\Controller;
 use App\Http\Resources\Api\V1\GoogleConnectionResource;
 use App\Services\Google\GoogleClientFactory;
+use App\Services\Google\GoogleConnectionHealth;
 use App\Services\Google\GoogleOAuthService;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -28,6 +29,7 @@ class GoogleIntegrationController extends Controller
     public function __construct(
         private readonly GoogleOAuthService $oauth,
         private readonly GoogleClientFactory $clients,
+        private readonly GoogleConnectionHealth $health,
     ) {}
 
     /** Status of both connections, for the integrations page. */
@@ -49,6 +51,38 @@ class GoogleIntegrationController extends Controller
                 ),
             ],
         ]);
+    }
+
+    /**
+     * What the last check found, for both services.
+     *
+     * Read, never probed. This is what a banner asks on every page load, and
+     * putting two Google round trips in front of that would make every
+     * navigation wait on Google. The hourly `google:health` run is what keeps
+     * these answers current, and each carries its own `checked_at` so a stale
+     * one can be recognised rather than trusted.
+     */
+    public function health(Request $request): JsonResponse
+    {
+        $user = $request->user();
+
+        return response()->json([
+            'data' => [
+                'youtube' => $this->health->lastKnown($user, GoogleService::YouTube),
+                'drive' => $this->health->lastKnown($user, GoogleService::Drive),
+            ],
+        ]);
+    }
+
+    /**
+     * Probe both services now.
+     *
+     * The button for somebody who has just fixed something and does not want
+     * to wait up to an hour to be believed.
+     */
+    public function checkHealth(Request $request): JsonResponse
+    {
+        return response()->json(['data' => $this->health->checkAll($request->user())]);
     }
 
     // ── YouTube ─────────────────────────────────────────────────────────────

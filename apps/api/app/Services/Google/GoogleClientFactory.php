@@ -111,9 +111,16 @@ class GoogleClientFactory
         if (isset($token['error'])) {
             // Typically invalid_grant: the user revoked access, or the refresh
             // token expired. Never log the token itself.
+            //
+            // The code travels with the exception so the health check can tell
+            // a dead grant (press Reconnect) from a rejected client (Reconnect
+            // will never help). Only the code — a fixed OAuth value — never
+            // error_description and never the body, which describes a request
+            // carrying the client secret and the refresh token.
             throw new GoogleNotConnectedException(
                 'The '.$connection->service->label().' connection is no longer valid. '
                 .'Please reconnect it.',
+                is_string($token['error']) ? $token['error'] : null,
             );
         }
 

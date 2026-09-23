@@ -36,6 +36,14 @@ class GoogleConnection extends Model
             'scopes' => 'encrypted:array',
             'token_expires_at' => 'datetime',
             'connected_at' => 'datetime',
+
+            // What the last check found. Stored rather than computed because
+            // an alert is about a change, and noticing one needs a memory of
+            // the previous answer — see GoogleConnectionHealth.
+            'health_guidance' => 'array',
+            'health_checked_at' => 'datetime',
+            'health_failing_since' => 'datetime',
+            'health_alerted_at' => 'datetime',
         ];
     }
 

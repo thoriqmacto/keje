@@ -96,6 +96,21 @@ class GoogleOAuthService
             'token_expires_at' => now()->addSeconds((int) ($token['expires_in'] ?? 3600)),
             'scopes' => isset($token['scope']) ? explode(' ', (string) $token['scope']) : null,
             'connected_at' => now(),
+
+            // A fresh grant clears whatever the last check concluded about the
+            // old one. Without this, reconnecting to fix a dead token would
+            // leave the banner up and the upload preflight still refusing,
+            // until an hourly check happened to disagree with it.
+            //
+            // connected_at moving is also what restarts the seven-day clock a
+            // Testing-mode consent screen puts on its refresh tokens.
+            'health_status' => null,
+            'health_message' => null,
+            'health_guidance' => null,
+            'health_checked_at' => null,
+            'health_failing_since' => null,
+            'health_alerted_at' => null,
+            'health_alerted_status' => null,
         ])->save();
 
         // A reconnect can change what the grant permits, and points at

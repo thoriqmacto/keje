@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { useAuth } from "@/components/auth-provider";
+import { GoogleHealthBanner } from "@/components/google-health-banner";
 import { Button } from "@/components/ui/button";
 import { APP_NAME } from "@/lib/env";
 import { layoutMetricsStyle } from "@/lib/layout-metrics";
@@ -35,6 +36,21 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             available right now.
         */
         <div className="flex min-h-dvh flex-col" style={layoutMetricsStyle}>
+            {/*
+                Above the header rather than below it, and deliberately not
+                sticky. A Google connection that has stopped working is worth
+                seeing on arrival; it is not worth a permanent strip of
+                chrome, and pinning it would take a row of height from every
+                page forever to warn about something that is usually fine.
+
+                It renders nothing at all unless something needs attention, so
+                the common case costs no height. When it does appear, a page
+                sized to the viewport — the Studio list is — scrolls by
+                exactly the banner's height until it is scrolled past, at
+                which point the header pins and the page fits again. That is
+                the right trade for a notice this rare.
+            */}
+            <GoogleHealthBanner />
             {/*
                 Sticky rather than scrolling away. On a long project page the
                 navigation was reachable only by scrolling back to the top,

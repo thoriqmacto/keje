@@ -22,6 +22,7 @@ use Laravel\Sanctum\Sanctum;
 use Mockery;
 use PHPUnit\Framework\Attributes\Test;
 use RuntimeException;
+use Tests\Support\FakesGoogleHealth;
 use Tests\TestCase;
 
 /**
@@ -33,11 +34,16 @@ use Tests\TestCase;
  */
 class YouTubePlaylistTest extends TestCase
 {
+    use FakesGoogleHealth;
     use RefreshDatabase;
 
     protected function setUp(): void
     {
         parent::setUp();
+
+        // These tests are about locking, ordering and permissions. The probe
+        // that publishing now runs first has its own test file.
+        $this->assumeGoogleConnectionsWork();
 
         Storage::fake('local');
 

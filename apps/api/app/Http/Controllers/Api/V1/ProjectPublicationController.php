@@ -13,6 +13,8 @@ use App\Jobs\UploadVideoToGoogleDriveJob;
 use App\Jobs\UploadVideoToYouTubeJob;
 use App\Models\ContentProject;
 use App\Services\Google\GoogleClientFactory;
+use App\Services\Google\GoogleConnectionHealth;
+use App\Services\Google\GoogleOAuthClassifier;
 use App\Services\Google\YouTubePlaylistAssigner;
 use App\Services\Google\YouTubePublicationRecorder;
 use App\Services\Google\YouTubeReplacementService;
@@ -33,6 +35,7 @@ class ProjectPublicationController extends Controller
 {
     public function __construct(
         private readonly GoogleClientFactory $clients,
+        private readonly GoogleConnectionHealth $health,
     ) {}
 
     public function drive(Request $request, ContentProject $project): JsonResponse
@@ -191,6 +194,25 @@ class ProjectPublicationController extends Controller
      * A missing Drive connection must never block a YouTube upload, and a
      * missing YouTube connection must never block a Drive backup.
      */
+    /**
+     * Refuse now rather than fail later.
+     *
+     * "Is there a connection row" used to be the whole check, and a row stays
+     * there long after Google stops honouring the token in it — so a dead
+     * grant queued a job, spent an upload slot, and reported itself only once
+     * the job ran. That is the complaint this endpoint exists to answer.
+     *
+     * The probe is live rather than read from the last hourly check. It costs
+     * a token exchange and one small API call before the button responds,
+     * which is a second of waiting to avoid discovering the problem after a
+     * render — and publishing is a deliberate, occasional action, not
+     * something happening on every keystroke.
+     *
+     * Only genuinely broken statuses block. `unreachable` deliberately does
+     * not: a network blip between this server and Google says nothing about
+     * the credentials, the queued job will try again from its own process,
+     * and refusing on one would turn a transient fault into a wall.
+     */
     private function assertConnected(GoogleService $service): void
     {
         if (! $this->clients->isConfigured($service)) {
@@ -204,6 +226,18 @@ class ProjectPublicationController extends Controller
                 'google' => ['Connect '.$service->label().' from Settings → Integrations first.'],
             ]);
         }
+
+        $health = $this->health->check(request()->user(), $service);
+
+        if (! in_array($health['status'], GoogleOAuthClassifier::brokenStatuses(), true)) {
+            return;
+        }
+
+        // The guidance travels with the refusal, so the studio can show what
+        // to actually do instead of a sentence saying something went wrong.
+        throw ValidationException::withMessages([
+            'google' => [$health['message'], ...$health['guidance']],
+        ]);
     }
 
     private function assertRendered(ContentProject $project): void

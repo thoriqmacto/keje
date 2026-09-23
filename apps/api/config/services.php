@@ -66,6 +66,31 @@ return [
                 'redirect_uri' => env('GOOGLE_DRIVE_REDIRECT_URI'),
             ],
         ],
+
+        /*
+         * Watching the connections rather than discovering they are dead.
+         *
+         * `consent_screen_testing` is the one setting that buys a genuine
+         * countdown. Google expires a Testing-mode refresh token seven days
+         * after it is granted; a published one has no expiry to count down to
+         * at all, so with this false Keje warns on nothing and relies on the
+         * probe. Setting it true when the screen is actually published would
+         * produce a weekly warning about an expiry that never arrives.
+         */
+        'health' => [
+            'consent_screen_testing' => env('GOOGLE_CONSENT_SCREEN_TESTING', false),
+            'testing_grant_days' => env('GOOGLE_TESTING_GRANT_DAYS', 7),
+            'warn_within_hours' => env('GOOGLE_HEALTH_WARN_WITHIN_HOURS', 48),
+
+            // Off unless a real mailer is configured. The in-app banner is the
+            // channel that always works; email is what reaches somebody who is
+            // not looking at the app, which is the whole point of an early
+            // warning.
+            'alert_email' => env('GOOGLE_HEALTH_ALERT_EMAIL'),
+
+            // How long before the same unresolved problem is raised again.
+            'alert_repeat_hours' => env('GOOGLE_HEALTH_ALERT_REPEAT_HOURS', 24),
+        ],
     ],
 
     'drive' => [

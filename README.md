@@ -371,6 +371,11 @@ Google — **secrets, API host only, never Vercel, never `NEXT_PUBLIC_*`**:
 - `GOOGLE_DRIVE_FOLDER_NAME` — default `Keje YouTube Outputs`.
 - `YOUTUBE_EXPECTED_CHANNEL_ID` — uploads are blocked when the connected channel differs.
 - `YOUTUBE_DEFAULT_CATEGORY_ID` — default `27` (Education).
+- `GOOGLE_CONSENT_SCREEN_TESTING` — set `true` **only** while the consent screen is still in Testing. See [Knowing before it breaks](#knowing-before-it-breaks).
+- `GOOGLE_TESTING_GRANT_DAYS` — default `7`; Google's Testing-mode refresh token lifetime.
+- `GOOGLE_HEALTH_WARN_WITHIN_HOURS` — default `48`; how early the countdown starts warning.
+- `GOOGLE_HEALTH_ALERT_EMAIL` — where connection alerts go. Blank falls back to the account's own address.
+- `GOOGLE_HEALTH_ALERT_REPEAT_HOURS` — default `24`; how long before the same unresolved problem is raised again.
 
 ### `apps/web/.env.local`
 See `apps/web/.env.local.example`.
@@ -1308,6 +1313,71 @@ Neither flow enables `include_granted_scopes`. Incremental authorization lets Go
 
 > **YouTube API development limitation.** Google restricts uploads from unverified YouTube Data API projects to **private** visibility until an API compliance audit is completed. During development, expect uploaded videos to remain private regardless of the privacy you select. This is Google policy, not a Keje bug, and must not be worked around.
 
+### Knowing before it breaks
+
+Keje used to learn that a Google connection had died the same way you did: an
+upload failed. By then a render had been spent, a pipeline column said
+`failed`, and the only advice on offer was "reconnect" — which is the right
+fix for exactly one of the things that go wrong.
+
+Three pieces replace that.
+
+**An hourly probe.** `php artisan google:health` exchanges each stored refresh
+token and makes one cheap call per service — a YouTube `channels.list` (one
+unit of a daily ten thousand) and a Drive `about.get` (free). The exchange
+proves the grant is alive; the call proves it can actually reach the API,
+which is a different question. A Cloud project with the Drive API left
+disabled hands out perfectly valid tokens that fail on first use. It is
+scheduled in `routes/console.php`, so production needs cron running
+`schedule:run` — see [Queue worker](#queue-worker) for where that lives.
+
+**A verdict you can act on.** Each result is classified rather than reported.
+`invalid_grant` means the token is dead and reconnecting fixes it;
+`invalid_client` means the client id and secret do not match, the token was
+never examined, and reconnecting will not help at all; a disabled API needs
+the Cloud console and nothing else. Each carries its own guidance, shown on
+the card and in the alert. None of it is Google's own wording — a failed token
+exchange describes a request carrying the client secret and the refresh token,
+and Google's error bodies have been known to quote request parameters back.
+
+**A refusal at the button.** Pressing Upload or Back up now probes first and
+refuses with the same message and guidance, so a dead connection costs a
+second instead of a render.
+
+> **"Nearly expired" is knowable in exactly one case.** Google publishes *no*
+> expiry for a published app's refresh token — it lives until it is revoked or
+> goes six months unused, so there is nothing to count down and any countdown
+> shown would be invented. The one exception is a consent screen still in
+> **Testing**, whose refresh tokens Google expires **seven days** after they
+> are granted. Set `GOOGLE_CONSENT_SCREEN_TESTING=true` for that case and Keje
+> shows a real countdown and warns `GOOGLE_HEALTH_WARN_WITHIN_HOURS` ahead.
+> Leave it `false` once the screen is published: a weekly warning about an
+> expiry that never arrives is worse than no warning. For everything else the
+> hourly probe *is* the early warning.
+
+**Where it shows up.** A banner appears on every authenticated page when
+something needs attention, and only then — a healthy connection, one nobody
+set up, and a network blip all render nothing. `unreachable` is deliberately
+quiet: the server could not get to Google, so nothing was learned about the
+credentials either way, and a banner for every blip is how somebody learns to
+stop reading the banner. **Settings → Integrations** carries the full verdict,
+how long it has been failing, the numbered guidance, and a **Check now**
+button for the minute after you fix something and do not want to wait an hour
+to be believed.
+
+**Alerts.** The same run emails when a status *becomes* a problem, when it
+gets worse (`expiring_soon` → `renew_required` is worth saying twice), and
+then at most once per `GOOGLE_HEALTH_ALERT_REPEAT_HOURS` while it stays
+broken. `unreachable` never alerts. The command exits non-zero when anything
+needs attention, so cron's own mail-on-failure works as a second channel if no
+mailer is configured.
+
+```bash
+php artisan google:health                  # probe everything, alert on what is new
+php artisan google:health --user=1         # one account
+php artisan google:health --quiet-alerts   # record the verdicts, send nothing
+```
+
 ### Scheduling
 
 Choose a publish time and Keje uploads the video as `private` with `publishAt` set. **YouTube performs the publication itself** — there is no cron job flipping videos public. Times are entered in your local timezone and converted to RFC 3339 UTC on the way out.
@@ -1395,6 +1465,36 @@ php artisan render:status                   # queue depth, from the app's side
 
 Rendering **must not** use the `sync` driver — that would run FFmpeg inside a
 web request. `media:diagnose` fails if you try.
+
+### The scheduler
+
+Separate from the worker, and needed for a different reason: the hourly Google
+connection check runs on Laravel's scheduler, not on the queue. Without it the
+connections are never probed, the banner never appears, and the first sign of
+a dead token is a refused upload again — which works, but is the thing the
+check exists to get ahead of.
+
+One cron entry, the standard Laravel one:
+
+```bash
+sudo crontab -u www-data -e
+```
+
+```
+* * * * * cd /var/www/keje/apps/api && php artisan schedule:run >> /dev/null 2>&1
+```
+
+It runs every minute and Laravel decides what is actually due, so there is
+nothing to add here when another scheduled task appears. Verify with:
+
+```bash
+php artisan schedule:list      # what is registered, and when it next runs
+php artisan google:health      # run the check by hand, right now
+```
+
+`google:health` exits non-zero when something needs attention, so cron's own
+mail-on-failure is a second alert channel for anybody who has not set
+`GOOGLE_HEALTH_ALERT_EMAIL`.
 
 Three settings in those files are load-bearing, and all three fail silently:
 
