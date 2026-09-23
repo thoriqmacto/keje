@@ -217,6 +217,14 @@ Route::prefix('v1')->group(function () {
         // Google connection status: both services in one payload.
         Route::get('/integrations/google', [GoogleIntegrationController::class, 'show']);
 
+        // What the last scheduled check found. A read, so the app-wide banner
+        // can ask on every page load without waiting on Google.
+        Route::get('/integrations/google/health', [GoogleIntegrationController::class, 'health']);
+
+        // Probe both services now, for somebody who has just fixed something
+        // and does not want to wait up to an hour to be believed.
+        Route::post('/integrations/google/health', [GoogleIntegrationController::class, 'checkHealth']);
+
         // Separate lifecycles. Connecting or dropping one never touches the other.
         Route::post('/integrations/youtube/redirect', [GoogleIntegrationController::class, 'redirectYouTube']);
         Route::delete('/integrations/youtube', [GoogleIntegrationController::class, 'destroyYouTube']);

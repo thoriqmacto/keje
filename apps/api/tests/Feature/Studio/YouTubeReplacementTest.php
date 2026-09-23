@@ -24,6 +24,7 @@ use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\Support\FakesGoogleHealth;
 use Tests\TestCase;
 
 /**
@@ -41,6 +42,7 @@ use Tests\TestCase;
  */
 class YouTubeReplacementTest extends TestCase
 {
+    use FakesGoogleHealth;
     use RefreshDatabase;
 
     private \ArrayObject $requests;
@@ -48,6 +50,10 @@ class YouTubeReplacementTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        // These tests are about locking, ordering and permissions. The probe
+        // that publishing now runs first has its own test file.
+        $this->assumeGoogleConnectionsWork();
 
         $this->requests = new \ArrayObject;
         Storage::fake('local');

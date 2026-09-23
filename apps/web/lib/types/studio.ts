@@ -442,6 +442,57 @@ export type YouTubeConnection = GoogleConnectionBase & {
 export type DriveConnection = GoogleConnectionBase & { service: "drive" };
 
 /**
+ * Every verdict `google:health` can reach.
+ *
+ * `unreachable` is the one that looks like a failure and is not: it means the
+ * server could not get to Google at all, so nothing was learned about the
+ * credentials either way. It never raises an alert and never blocks an
+ * upload, which is why the UI has to be able to tell it apart from the rest.
+ */
+export type GoogleHealthStatus =
+    | "healthy"
+    | "expiring_soon"
+    | "not_configured"
+    | "disconnected"
+    | "renew_required"
+    | "invalid_client"
+    | "scope_error"
+    | "api_disabled"
+    | "unreachable"
+    | "unknown_error";
+
+/**
+ * What the API knows about one connection's ability to actually work.
+ *
+ * The three `expires_*` fields are null far more often than not, and that is
+ * the honest answer rather than a gap: Google publishes no expiry for a
+ * published app's refresh token, so there is nothing to count down. They are
+ * non-null only for a grant made against a consent screen still in Testing,
+ * which Google expires seven days after issuing. Null means "unknowable",
+ * never "plenty of time".
+ */
+export type GoogleHealth = {
+    service: GoogleServiceKey;
+    label: string;
+    status: GoogleHealthStatus;
+    /** One sentence, already written for a human. Never Google's own words. */
+    message: string;
+    /** What to actually do about it, in order. Empty when healthy. */
+    guidance: string[];
+    configured: boolean;
+    connected: boolean;
+    /** null when nothing has checked yet — the hourly run fills it in. */
+    checked_at: string | null;
+    /** When the trouble started, so "broken" can read as "broken since". */
+    failing_since: string | null;
+    expires_at: string | null;
+    expires_in_seconds: number | null;
+    expires_in_human: string | null;
+};
+
+export type GoogleHealthReport = Record<GoogleServiceKey, GoogleHealth>;
+
+/**
  * What a stored grant permits, derived server-side from the scopes Google
  * returned — not from configuration. A connection made before a scope existed
  * reports that one capability false and keeps the rest working.

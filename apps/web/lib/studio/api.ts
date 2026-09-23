@@ -7,6 +7,7 @@ import type {
     ContentTopic,
     DriveAbout,
     DriveBackupFile,
+    GoogleHealthReport,
     OldVideoDisposition,
     RenderStatusPayload,
     Speaker,
@@ -48,6 +49,12 @@ export const studioKeys = {
     topic: (id: string) => `studio:topic:${id}`,
     speakers: "studio:speakers",
     google: "studio:google",
+    /*
+     * Deliberately separate from `google`. The connection payload is what the
+     * Integrations page edits; this is what every page reads through the
+     * banner, and revalidating one must not re-fetch the other.
+     */
+    googleHealth: "studio:google-health",
     stats: "studio:stats",
     storage: "studio:storage",
     audioSources: "studio:audio-sources",
@@ -396,6 +403,30 @@ export async function listDriveBackups(
 
 export async function refreshDriveCatalog(): Promise<void> {
     await api.post("/integrations/drive/refresh");
+}
+
+/**
+ * What the last scheduled check found, for both services.
+ *
+ * A read — it never talks to Google. The banner asks this on every page load,
+ * and putting two Google round trips in front of that would make every
+ * navigation wait on somebody else's network.
+ */
+export async function getGoogleHealth(): Promise<GoogleHealthReport> {
+    const { data } = await api.get<{ data: GoogleHealthReport }>("/integrations/google/health");
+    return data.data;
+}
+
+/**
+ * Probe both services now.
+ *
+ * Slow on purpose: it is a token exchange plus an API call per service. For
+ * somebody who has just fixed something and does not want to wait up to an
+ * hour to be believed.
+ */
+export async function checkGoogleHealth(): Promise<GoogleHealthReport> {
+    const { data } = await api.post<{ data: GoogleHealthReport }>("/integrations/google/health");
+    return data.data;
 }
 
 /**

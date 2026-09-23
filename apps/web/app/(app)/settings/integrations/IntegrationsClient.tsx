@@ -15,9 +15,15 @@ import {
     CardHeader,
     CardTitle,
 } from "@/components/ui/card";
-import { apiErrorMessage, studioKeys } from "@/lib/studio/api";
+import {
+    apiErrorMessage,
+    checkGoogleHealth,
+    getGoogleHealth,
+    studioKeys,
+} from "@/lib/studio/api";
 import { formatDateTime } from "@/lib/studio/format";
-import type { GoogleIntegrations, GoogleServiceKey } from "@/lib/types/studio";
+import { healthTone, isStale } from "@/lib/studio/google-health";
+import type { GoogleHealth, GoogleIntegrations, GoogleServiceKey } from "@/lib/types/studio";
 
 /** Messages for the ?youtube= / ?drive= codes the API callbacks redirect back with. */
 const CALLBACK_MESSAGES: Record<string, { ok: boolean; text: string }> = {
@@ -44,7 +50,32 @@ async function getIntegrations(): Promise<GoogleIntegrations> {
 export default function IntegrationsClient() {
     const params = useSearchParams();
     const { data, isLoading, mutate } = useSWR(studioKeys.google, getIntegrations);
+    const { data: health, mutate: mutateHealth } = useSWR(studioKeys.googleHealth, getGoogleHealth);
     const [busy, setBusy] = useState<GoogleServiceKey | null>(null);
+    const [checking, setChecking] = useState(false);
+
+    /**
+     * Probe both services now, rather than waiting for the hourly run.
+     *
+     * The button for somebody who has just fixed a client secret or
+     * re-enabled an API and wants to be believed immediately. It is slow —
+     * a token exchange plus an API call per service — which is why it is a
+     * button and not what the page does on load.
+     */
+    async function onCheckNow() {
+        setChecking(true);
+        try {
+            const result = await checkGoogleHealth();
+            // Seed the cache with what came back instead of re-fetching:
+            // the POST already returned the fresh verdicts.
+            await mutateHealth(result, { revalidate: false });
+            toast.success("Checked both connections.");
+        } catch (error) {
+            toast.error(apiErrorMessage(error, "Could not check the connections."));
+        } finally {
+            setChecking(false);
+        }
+    }
 
     // Surface the outcome of either OAuth round-trip exactly once.
     useEffect(() => {
@@ -71,8 +102,11 @@ export default function IntegrationsClient() {
         if (!handled) return;
 
         void mutate();
+        // A fresh grant clears the recorded health server-side; re-read so a
+        // banner about the connection just fixed disappears immediately.
+        void mutateHealth();
         window.history.replaceState({}, "", "/settings/integrations");
-    }, [params, mutate]);
+    }, [params, mutate, mutateHealth]);
 
     async function onConnect(service: GoogleServiceKey) {
         setBusy(service);
@@ -98,6 +132,7 @@ export default function IntegrationsClient() {
         try {
             await api.delete(`/integrations/${service}`);
             await mutate();
+            await mutateHealth();
             toast.success(`${SERVICE_LABELS[service]} disconnected.`);
         } catch (error) {
             toast.error(
@@ -120,6 +155,23 @@ export default function IntegrationsClient() {
                 you connected Google before this change, reconnect them here individually.
             </p>
 
+            {/*
+                Keje checks these on a schedule so a dead grant is found
+                within the hour rather than at upload time. The button is for
+                the minute after somebody fixes something and does not want to
+                wait for the next run to be believed.
+            */}
+            <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground">
+                    {health
+                        ? describeLastCheck(health.youtube, health.drive)
+                        : "Checking connection health…"}
+                </p>
+                <Button variant="outline" size="sm" onClick={() => void onCheckNow()} disabled={checking}>
+                    {checking ? "Checking…" : "Check now"}
+                </Button>
+            </div>
+
             {isLoading && <p className="text-sm text-muted-foreground">Loading…</p>}
 
             {data && (
@@ -130,6 +182,7 @@ export default function IntegrationsClient() {
                     configured={data.youtube.configured}
                     envHint="GOOGLE_YOUTUBE_CLIENT_ID, GOOGLE_YOUTUBE_CLIENT_SECRET and GOOGLE_YOUTUBE_REDIRECT_URI"
                     connectedAt={data.youtube.connected_at}
+                    health={health?.youtube}
                     busy={busy !== null}
                     onConnect={() => void onConnect("youtube")}
                     onDisconnect={() => void onDisconnect("youtube")}
@@ -215,6 +268,7 @@ export default function IntegrationsClient() {
                     configured={data.drive.configured}
                     envHint="GOOGLE_DRIVE_CLIENT_ID, GOOGLE_DRIVE_CLIENT_SECRET and GOOGLE_DRIVE_REDIRECT_URI"
                     connectedAt={data.drive.connected_at}
+                    health={health?.drive}
                     busy={busy !== null}
                     onConnect={() => void onConnect("drive")}
                     onDisconnect={() => void onDisconnect("drive")}
@@ -252,6 +306,7 @@ function IntegrationCard({
     connected,
     configured,
     envHint,
+    health,
     busy,
     onConnect,
     onDisconnect,
@@ -263,6 +318,7 @@ function IntegrationCard({
     configured: boolean;
     envHint: string;
     connectedAt: string | null;
+    health?: GoogleHealth;
     busy: boolean;
     onConnect: () => void;
     onDisconnect: () => void;
@@ -276,14 +332,28 @@ function IntegrationCard({
                         <CardTitle>{title}</CardTitle>
                         <CardDescription>{description}</CardDescription>
                     </div>
+                    {/*
+                        The pill says whether it *works*, not whether a row
+                        exists. "Connected" sitting above "Google rejected the
+                        stored credentials" is exactly the reassurance that
+                        sent people to discover the truth at upload time.
+                        Until the first check lands it falls back to the
+                        stored state, which is all that is known.
+                    */}
                     <span
                         className={`inline-flex shrink-0 items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                            connected
-                                ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                                : "bg-muted text-muted-foreground"
+                            health
+                                ? SEVERITY_PILL[healthTone(health.status).severity]
+                                : connected
+                                  ? SEVERITY_PILL.ok
+                                  : SEVERITY_PILL.info
                         }`}
                     >
-                        {connected ? "Connected" : "Not connected"}
+                        {health
+                            ? healthTone(health.status).label
+                            : connected
+                              ? "Connected"
+                              : "Not connected"}
                     </span>
                 </div>
             </CardHeader>
@@ -294,6 +364,8 @@ function IntegrationCard({
                         <code className="font-mono">{envHint}</code> in the API environment.
                     </p>
                 )}
+
+                {health && <HealthPanel health={health} />}
 
                 {children}
 
@@ -310,4 +382,97 @@ function IntegrationCard({
             </CardContent>
         </Card>
     );
+}
+
+/** One palette, so the pill and the panel cannot disagree about a severity. */
+const SEVERITY_PILL: Record<string, string> = {
+    ok: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+    info: "bg-muted text-muted-foreground",
+    warning: "bg-amber-500/10 text-amber-700 dark:text-amber-400",
+    critical: "bg-red-500/10 text-red-600 dark:text-red-400",
+};
+
+const SEVERITY_PANEL: Record<string, string> = {
+    ok: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+    info: "bg-muted text-muted-foreground",
+    warning: "bg-amber-500/10 text-amber-800 dark:text-amber-400",
+    critical: "bg-red-500/10 text-red-600 dark:text-red-400",
+};
+
+/**
+ * What the check found, and what to do about it.
+ *
+ * The guidance is the reason this is a panel rather than another pill. Every
+ * broken status has a different fix — a dead refresh token needs a reconnect,
+ * a mismatched client secret needs an .env edit and a config:cache, a
+ * disabled API needs the Cloud console — and the old single sentence
+ * ("reconnect") was right for one of them and wasted work for the rest.
+ */
+function HealthPanel({ health }: { health: GoogleHealth }) {
+    const tone = healthTone(health.status);
+    const stale = isStale(health.checked_at);
+
+    return (
+        <div className={`flex flex-col gap-2 rounded-md px-3 py-2 text-sm ${SEVERITY_PANEL[tone.severity]}`}>
+            <p className="font-medium">{health.message}</p>
+
+            {/*
+                Only ever set for a grant from a consent screen still in
+                Testing, which Google expires seven days after issuing. Every
+                other connection has no countdown at all, and showing an
+                invented one would be worse than showing none.
+            */}
+            {health.expires_in_human && (
+                <p>
+                    Stops working in about <strong>{health.expires_in_human}</strong>
+                    {health.expires_at ? ` (${formatDateTime(health.expires_at)})` : ""}.
+                </p>
+            )}
+
+            {/* "Broken" is skimmed; "broken since Tuesday" is acted on. */}
+            {health.failing_since && (
+                <p className="text-xs opacity-80">
+                    Failing since {formatDateTime(health.failing_since)}.
+                </p>
+            )}
+
+            {health.guidance.length > 0 && (
+                <ol className="list-decimal space-y-1 pl-5 text-xs opacity-90">
+                    {health.guidance.map((step) => (
+                        <li key={step}>{step}</li>
+                    ))}
+                </ol>
+            )}
+
+            <p className="text-xs opacity-70">
+                {health.checked_at
+                    ? `Last checked ${formatDateTime(health.checked_at)}${
+                          stale ? " — the scheduled check may not be running." : ""
+                      }`
+                    : "Not checked yet."}
+            </p>
+        </div>
+    );
+}
+
+/**
+ * One line about how current these answers are.
+ *
+ * Reports the older of the two, because the page shows both and the stalest
+ * one is what determines whether any of it can be trusted.
+ */
+function describeLastCheck(youtube: GoogleHealth, drive: GoogleHealth): string {
+    const times = [youtube.checked_at, drive.checked_at].filter(
+        (value): value is string => value !== null,
+    );
+
+    if (times.length === 0) {
+        return "These connections have not been checked yet. Keje checks them hourly.";
+    }
+
+    const oldest = times.reduce((a, b) => (new Date(a) < new Date(b) ? a : b));
+
+    return isStale(oldest)
+        ? `Last checked ${formatDateTime(oldest)}. That is older than the hourly schedule — check the scheduler is running.`
+        : `Checked hourly. Last check ${formatDateTime(oldest)}.`;
 }

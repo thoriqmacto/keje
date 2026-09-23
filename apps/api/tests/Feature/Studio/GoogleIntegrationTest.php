@@ -33,6 +33,7 @@ use Illuminate\Support\Facades\Storage;
 use Laravel\Sanctum\Sanctum;
 use Mockery;
 use PHPUnit\Framework\Attributes\Test;
+use Tests\Support\FakesGoogleHealth;
 use Tests\TestCase;
 
 /**
@@ -45,6 +46,7 @@ use Tests\TestCase;
  */
 class GoogleIntegrationTest extends TestCase
 {
+    use FakesGoogleHealth;
     use RefreshDatabase;
 
     /** Requests the faked Google HTTP client saw, for isolation assertions. */
@@ -53,6 +55,10 @@ class GoogleIntegrationTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        // These tests are about locking, ordering and permissions. The probe
+        // that publishing now runs first has its own test file.
+        $this->assumeGoogleConnectionsWork();
 
         Storage::fake('local');
         $this->googleRequests = new ArrayObject;
