@@ -288,6 +288,23 @@ export async function startRender(
     await api.post(`/content-projects/${id}/render`, { post_actions: postActions });
 }
 
+/**
+ * Stop the render in flight.
+ *
+ * Returns the outcome rather than swallowing it, because "cancelled" and
+ * "stopping" are genuinely different things to tell somebody: the first is
+ * done, the second is a promise that FFmpeg is on its way down.
+ */
+export async function cancelRender(
+    id: string,
+): Promise<{ outcome: "cancelled" | "stopping"; message: string }> {
+    const { data } = await api.post<{ outcome: "cancelled" | "stopping"; message: string }>(
+        `/content-projects/${id}/render/cancel`,
+    );
+
+    return { outcome: data.outcome, message: data.message };
+}
+
 export async function getRenderStatus(id: string): Promise<RenderStatusPayload> {
     const { data } = await api.get<{ data: RenderStatusPayload }>(
         `/content-projects/${id}/render-status`,

@@ -17,6 +17,16 @@ enum RenderStatus: string
     case Rendered = 'rendered';
     case Failed = 'failed';
 
+    /**
+     * Stopped on purpose, part-way through.
+     *
+     * Distinct from Failed because nothing went wrong: somebody wanted the
+     * encode to stop so they could change what it was encoding. Calling that
+     * a failure would put a red badge on a deliberate act and make the person
+     * who did it wonder what they broke.
+     */
+    case Cancelled = 'cancelled';
+
     /** Render is occupying a queue slot; a second dispatch must be refused. */
     public function isInFlight(): bool
     {
@@ -38,6 +48,7 @@ enum RenderStatus: string
             self::Rendering => 'Rendering',
             self::Rendered => 'Rendered',
             self::Failed => 'Failed',
+            self::Cancelled => 'Cancelled',
         };
     }
 }

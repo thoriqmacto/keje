@@ -69,6 +69,35 @@ class ProjectRenderController extends Controller
     }
 
     /**
+     * Stop the render in progress.
+     *
+     * The reason this exists is narrow and worth stating: a render is the
+     * longest thing Keje does, and the properties it draws — the titles, the
+     * artwork, the cuts — are exactly the things somebody notices are wrong
+     * the moment the encode starts. Without this, a typo in a title meant
+     * waiting out a render nobody wanted before being allowed to start the
+     * one they did, because a second dispatch is refused while the first is
+     * in flight.
+     *
+     * 409 rather than 404 when there is nothing running: the project exists
+     * and the request was well formed, it just arrived after the render had
+     * already finished — usually because two tabs were open, or a click
+     * landed a second after the last frame.
+     */
+    public function cancel(Request $request, ContentProject $project): JsonResponse
+    {
+        abort_unless($request->user()->can('update', $project), 404);
+
+        $result = $this->dispatcher->cancel($project);
+
+        return response()->json([
+            'message' => $result['message'],
+            'outcome' => $result['outcome'],
+            'data' => new ContentProjectResource($project->fresh(['topic', 'speaker'])),
+        ], $result['outcome'] === 'nothing_to_cancel' ? 409 : 202);
+    }
+
+    /**
      * What to do once the render succeeds.
      *
      * Only ever what is actually possible: asking for a YouTube upload while
@@ -138,6 +167,11 @@ class ProjectRenderController extends Controller
                 'stalled_reason' => $stalled,
                 'has_output' => filled($project->output_path),
                 'rendered_at' => $project->rendered_at?->toIso8601String(),
+                // Requested, but FFmpeg has not stopped yet. Without this
+                // the Cancel button would stay live for the second or two the
+                // shutdown takes and read as though the click was ignored.
+                'cancel_requested' => $latest?->cancel_requested_at !== null
+                    && $latest->status->isInFlight(),
                 'attempt' => [
                     'id' => $latest?->uuid,
                     'status' => $latest?->status->value,

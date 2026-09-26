@@ -13,7 +13,15 @@ export type RenderStatus =
     | "queued"
     | "rendering"
     | "rendered"
-    | "failed";
+    | "failed"
+    /**
+     * Stopped on purpose, part-way through — never an error.
+     *
+     * Kept distinct from "failed" because the two need opposite presentation:
+     * a cancelled render is somebody changing their mind about what to encode,
+     * and a red badge would have them looking for what they broke.
+     */
+    | "cancelled";
 
 export type DriveStatus = "pending" | "uploading" | "uploaded" | "failed";
 
@@ -345,6 +353,14 @@ export type RenderStatusPayload = {
     stalled_reason: string | null;
     has_output: boolean;
     rendered_at: string | null;
+    /**
+     * A stop has been asked for and FFmpeg has not finished shutting down.
+     *
+     * True only while the attempt is still in flight. It is what keeps the
+     * Cancel button from staying live for the second or two the shutdown
+     * takes, which would read as a click that did nothing.
+     */
+    cancel_requested: boolean;
     attempt: {
         id: string | null;
         status: string | null;

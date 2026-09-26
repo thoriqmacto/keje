@@ -43,6 +43,7 @@ import { ThumbnailPicker } from "@/components/studio/thumbnail-picker";
 import { useDocumentTitle } from "@/lib/use-document-title";
 import {
     apiErrorMessage,
+    cancelRender,
     duplicateProject,
     backupToDrive,
     deleteProject,
@@ -203,6 +204,32 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
             await Promise.all([mutate(), render.mutate()]);
         } catch (error) {
             toast.error(apiErrorMessage(error, "Could not queue the render."));
+        }
+    }
+
+    /**
+     * Stop the render that is running.
+     *
+     * The whole point of the feature: a render is the longest thing here, and
+     * a wrong title is noticed the second the encode starts. Until this
+     * existed the only option was to wait out a render nobody wanted, because
+     * a second one is refused while the first is in flight.
+     *
+     * No confirmation dialog. Nothing is lost that pressing Render again does
+     * not remake, and a modal in front of "stop wasting my CPU" is a worse
+     * experience than the mistake it guards against.
+     */
+    async function onCancelRender() {
+        try {
+            const { message } = await cancelRender(projectId);
+            toast.success(message);
+            // Both: the project's render_status may already have moved, and
+            // the attempt is what carries "stopping".
+            await Promise.all([mutate(), render.mutate()]);
+        } catch (error) {
+            toast.error(apiErrorMessage(error, "Could not cancel the render."));
+            // The render probably finished between the click and the request.
+            await Promise.all([mutate(), render.mutate()]);
         }
     }
 
@@ -466,6 +493,8 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                                 status={renderStatus}
                                 progress={render.data?.progress ?? 0}
                                 stalledReason={render.data?.stalled_reason ?? null}
+                                cancelRequested={render.data?.cancel_requested ?? false}
+                                onCancel={() => void onCancelRender()}
                             />
 
                             {/* The MP4 exists and is a real render — of an
@@ -542,7 +571,9 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                                           ? "Render again"
                                           : project.render.status === "failed"
                                             ? "Retry render"
-                                            : "Render video"}
+                                            : project.render.status === "cancelled"
+                                              ? "Start render"
+                                              : "Render video"}
                                 </Button>
 
                                 {links?.download_url && (

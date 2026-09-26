@@ -19,6 +19,12 @@ class FfmpegService
     /** Keep only a diagnostic tail of FFmpeg output; logs must not grow unbounded. */
     public const LOG_TAIL_BYTES = 16000;
 
+    /** How often $shouldAbort is consulted. See run(). */
+    private const ABORT_CHECK_SECONDS = 2.0;
+
+    /** How long FFmpeg gets to exit on SIGTERM before SIGKILL follows. */
+    private const TERMINATE_GRACE_SECONDS = 10;
+
     public function __construct(
         private readonly string $binary,
         private readonly int $timeout = 7200,
@@ -53,17 +59,41 @@ class FfmpegService
      * `-progress pipe:1 -nostats` makes FFmpeg emit machine-readable
      * `out_time_us=` lines on stdout; stderr keeps the human-readable log.
      *
+     * ── Why this polls instead of handing run() a callback ───────────────
+     *
+     * A render is the longest thing this application does, and until now
+     * nothing could stop one: `Process::run()` blocks until FFmpeg is
+     * finished and gives no one a chance to change their mind. Starting the
+     * process and polling it is what makes a cancellation possible — each
+     * `isRunning()` drains the pipes, so progress keeps flowing, and between
+     * reads there is somewhere to ask whether to stop.
+     *
+     * $shouldAbort is consulted at most every ABORT_CHECK_SECONDS rather than
+     * on every poll: the caller's answer comes from the database, and asking
+     * twenty times a second for the length of a two-hour encode would be a
+     * lot of queries to learn "no" over and over.
+     *
+     * An aborted run returns `aborted: true` rather than throwing. The exit
+     * code cannot be trusted to say what happened — FFmpeg killed by SIGTERM
+     * looks like FFmpeg that failed — so the fact that we asked it to stop is
+     * the only reliable evidence, and it has to travel back with the result.
+     *
      * @param  list<string>  $arguments  FFmpeg arguments, excluding the binary
      * @param  Closure(float):void|null  $onProgress
-     * @return array{exit_code:int, log:string}
+     * @param  Closure():bool|null  $shouldAbort  polled; true stops FFmpeg
+     * @return array{exit_code:int, log:string, aborted:bool}
      */
-    public function run(array $arguments, ?float $totalDuration = null, ?Closure $onProgress = null): array
-    {
+    public function run(
+        array $arguments,
+        ?float $totalDuration = null,
+        ?Closure $onProgress = null,
+        ?Closure $shouldAbort = null,
+    ): array {
         $process = new Process([$this->binary, ...$arguments], timeout: $this->timeout);
 
         $log = '';
 
-        $process->run(function (string $type, string $buffer) use (&$log, $totalDuration, $onProgress): void {
+        $process->start(function (string $type, string $buffer) use (&$log, $totalDuration, $onProgress): void {
             if ($type === Process::OUT) {
                 if ($onProgress !== null && $totalDuration !== null && $totalDuration > 0) {
                     $this->reportProgress($buffer, $totalDuration, $onProgress);
@@ -79,9 +109,58 @@ class FfmpegService
             }
         });
 
+        $aborted = false;
+        $lastCheck = microtime(true);
+
+        while ($process->isRunning()) {
+            // Still enforced: updateStatus() does not check it, so without
+            // this a runaway encode would poll here forever instead of
+            // raising ProcessTimedOutException the way it used to.
+            $process->checkTimeout();
+
+            if ($shouldAbort !== null && (microtime(true) - $lastCheck) >= self::ABORT_CHECK_SECONDS) {
+                $lastCheck = microtime(true);
+
+                if ($shouldAbort()) {
+                    $aborted = true;
+
+                    /*
+                     * No signal argument, and that is not an omission.
+                     * Process::stop() always sends SIGTERM first — it
+                     * hardcodes 15 rather than using the constant, because
+                     * SIGTERM is only defined when ext-pcntl is loaded and
+                     * this application does not require it. The optional
+                     * second argument replaces the *escalation* signal, so
+                     * passing SIGTERM there would mean a process that ignores
+                     * SIGTERM gets sent it again instead of being killed.
+                     *
+                     * The default is what is wanted: SIGTERM, which FFmpeg
+                     * handles by closing its output file and exiting, then
+                     * SIGKILL if it is still there after the grace period.
+                     */
+                    $process->stop(self::TERMINATE_GRACE_SECONDS);
+
+                    break;
+                }
+            }
+
+            // Fine enough not to matter: progress is throttled again
+            // downstream to media.progress.min_interval_seconds (1.5s by
+            // default), so reading the pipes ten times a second is already an
+            // order of magnitude more often than anything is persisted.
+            usleep(100_000);
+        }
+
+        if (! $aborted) {
+            // Drains what is left in the pipes and reaps the child. Skipped on
+            // an abort, where stop() has already done both.
+            $process->wait();
+        }
+
         return [
             'exit_code' => (int) $process->getExitCode(),
             'log' => $this->tail($log),
+            'aborted' => $aborted,
         ];
     }
 
