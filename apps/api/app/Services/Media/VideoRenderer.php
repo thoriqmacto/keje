@@ -2,6 +2,7 @@
 
 namespace App\Services\Media;
 
+use App\Exceptions\Media\RenderCancelledException;
 use App\Exceptions\Media\RenderFailedException;
 use App\Models\ContentProject;
 use Closure;
@@ -71,12 +72,17 @@ class VideoRenderer
      * exited cleanly, so a partial file is never served or backed up.
      *
      * @param  Closure(float):void|null  $onProgress  receives 0..1
+     * @param  Closure():bool|null  $shouldAbort  polled during the encode
      * @return array{output_path:string, size:int, duration:float, exit_code:int, log:string}
      *
      * @throws RenderFailedException
+     * @throws RenderCancelledException
      */
-    public function render(ContentProject $project, ?Closure $onProgress = null): array
-    {
+    public function render(
+        ContentProject $project,
+        ?Closure $onProgress = null,
+        ?Closure $shouldAbort = null,
+    ): array {
         $disk = Storage::disk('local');
 
         if (! $project->hasRequiredMedia()) {
@@ -147,7 +153,18 @@ class VideoRenderer
             // stop when five minutes have been cut out of it.
             totalDuration: $effectiveDuration,
             onProgress: $onProgress,
+            shouldAbort: $shouldAbort,
         );
+
+        // Checked before the exit code, because a cancelled FFmpeg is
+        // indistinguishable from a failed one by its exit code alone — and
+        // reading it as a failure would retry the encode somebody just
+        // stopped, then blame them for a render that says "failed".
+        if ($result['aborted']) {
+            @unlink($tempOutput);
+
+            throw new RenderCancelledException('The render was cancelled.');
+        }
 
         if ($result['exit_code'] !== 0 || ! is_file($tempOutput)) {
             @unlink($tempOutput);

@@ -119,6 +119,79 @@ class RenderDispatcher
     }
 
     /**
+     * Stop the render this project is running, or has queued.
+     *
+     * Two different acts wearing one name, and the difference is worth being
+     * precise about because one of them is instant and the other is not:
+     *
+     *  - **Queued.** Nothing has started. The attempt is closed out here and
+     *    now, and a worker that later picks the job up finds it already
+     *    finished and does nothing.
+     *
+     *  - **Running.** FFmpeg is encoding in another process, possibly on
+     *    another host, and cannot be reached from a web request. All this can
+     *    do is leave a note the worker is looking for. It reads it within a
+     *    couple of seconds and stops, so the caller is told "stopping" rather
+     *    than "stopped" — claiming otherwise would have the studio show a
+     *    finished render while FFmpeg was still writing frames.
+     *
+     * `cancel_requested_at` is written in both cases, not just the second. A
+     * cancellation landing in the instant a worker is starting the encode
+     * would otherwise write Cancelled just before the worker wrote Running,
+     * and the render nobody wanted would run to completion. The flag is what
+     * the worker re-reads, so whoever wins that race the encode still stops.
+     *
+     * @return array{outcome: 'cancelled'|'stopping'|'nothing_to_cancel', message: string}
+     */
+    public function cancel(ContentProject $project): array
+    {
+        return DB::transaction(function () use ($project): array {
+            // The attempt row, not the project, is what both sides write —
+            // locking it is what serialises this against a worker claiming
+            // the same attempt.
+            $job = $project->renderJobs()->latest('id')->lockForUpdate()->first();
+
+            if ($job === null || ! $job->status->isInFlight()) {
+                return [
+                    'outcome' => 'nothing_to_cancel',
+                    'message' => 'There is no render in progress for this project.',
+                ];
+            }
+
+            $wasQueued = $job->status === RenderJobStatus::Queued;
+
+            $job->forceFill([
+                'cancel_requested_at' => now(),
+                ...$wasQueued ? [
+                    'status' => RenderJobStatus::Cancelled,
+                    'finished_at' => now(),
+                ] : [],
+            ])->save();
+
+            if ($wasQueued) {
+                $project->forceFill([
+                    'render_status' => RenderStatus::Cancelled,
+                    'render_error' => null,
+                ])->save();
+
+                return [
+                    'outcome' => 'cancelled',
+                    'message' => 'Render cancelled. You can change the project and render again.',
+                ];
+            }
+
+            // Left on Rendering on purpose. The encode is still running for
+            // another second or two, and the worker owns the transition to
+            // Cancelled — writing it here would describe a state that is not
+            // true yet.
+            return [
+                'outcome' => 'stopping',
+                'message' => 'Stopping the render. This takes a moment while FFmpeg shuts down.',
+            ];
+        });
+    }
+
+    /**
      * Which source file the database claims exists but the disk does not.
      *
      * Reported against the specific field rather than a generic "media", so

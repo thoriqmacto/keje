@@ -25,6 +25,9 @@ const RENDER_TONES: Record<RenderStatus, Tone> = {
     rendering: "progress",
     rendered: "success",
     failed: "danger",
+    // Neutral, not danger. A cancelled render is a decision, and colouring it
+    // like a failure would send somebody looking for what went wrong.
+    cancelled: "neutral",
 };
 
 const DRIVE_TONES: Record<DriveStatus, Tone> = {

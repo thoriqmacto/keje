@@ -577,6 +577,56 @@ MP4 on the private disk
 
 **FFmpeg never runs on Vercel, and never inside an HTTP request.** Rendering is always dispatched to `RenderContentProjectJob` on the `media` queue; the render endpoint returns `202` immediately and the studio polls for progress.
 
+### Cancelling a render
+
+A render is the longest thing Keje does, and the properties it draws — the
+titles, the artwork, the cuts — are exactly what you notice is wrong the
+moment the encode starts. **Cancel** sits next to the progress bar on the
+project page and stops it.
+
+It matters more than it sounds, because a second render is refused while the
+first is in flight. Before this existed, a typo in a title meant waiting out a
+render nobody wanted before being allowed to start the one they did.
+
+There are two cases, and they behave differently on purpose:
+
+| State when you press Cancel | What happens | What the API returns |
+|---|---|---|
+| **Queued** — no worker has picked it up | The attempt ends immediately. A worker that later takes the job finds it finished and does nothing. | `202` with `outcome: cancelled` |
+| **Rendering** — FFmpeg is encoding | The request leaves a note the worker is looking for. It reads it within about two seconds, sends FFmpeg `SIGTERM`, and records the result. | `202` with `outcome: stopping` |
+
+The second case cannot be instant and does not pretend to be: FFmpeg is in a
+queue worker, possibly on another host, and a web request cannot reach it.
+While the shutdown is in progress the status endpoint reports
+`cancel_requested: true`, the button reads **Stopping…**, and the progress bar
+goes grey — it is still where the encode got to, but it is no longer progress
+towards anything.
+
+`cancel_requested_at` is written in **both** cases, not only the second. A
+cancellation arriving in the instant a worker is claiming the attempt would
+otherwise write `cancelled` a fraction before the worker wrote `rendering`,
+and the render nobody wanted would run to completion. The flag is what the
+worker re-reads mid-encode, so whichever side wins that race the encode still
+stops.
+
+**A cancelled render is not a failed one.** `render_status` becomes
+`cancelled`, the badge is neutral rather than red, and `render_error` stays
+null — nothing went wrong, somebody changed their mind. Concretely that means:
+
+- The job never retries. A `RenderCancelledException` is caught and recorded
+  rather than rethrown; letting it escape would put the job through `$tries`
+  and start the encode that was just stopped.
+- Post-render actions never run. A render with **Back up to Drive** or
+  **Upload to YouTube** ticked publishes nothing if it was cancelled.
+- The partial MP4 in `temp/` is deleted. Only a complete encode is ever moved
+  into `renders/`, so nothing half-written can be served or backed up.
+- The project is immediately renderable again — `cancelled` is not an
+  in-flight state, so the next **Start render** is accepted straight away.
+
+Press Cancel after the render has already finished and you get a `409` with
+`outcome: nothing_to_cancel`, which is what a second tab or a click landing a
+second too late looks like.
+
 ### The FFmpeg graph
 
 ```
@@ -650,6 +700,7 @@ POST   /content-projects/{uuid}/background     image-validated upload
 GET    /content-projects/{uuid}/background     artwork, for the preview
 
 POST   /content-projects/{uuid}/render         202, queues the render
+POST   /content-projects/{uuid}/render/cancel  202, stops it; 409 if nothing is running
 GET    /content-projects/stats                 account-wide counts for the dashboard
 GET    /content-projects/{uuid}/render-status  status + progress
 GET    /content-projects/{uuid}/video          stream the MP4

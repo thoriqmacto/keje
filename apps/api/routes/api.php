@@ -146,6 +146,11 @@ Route::prefix('v1')->group(function () {
             Route::post('/render', [ProjectRenderController::class, 'store']);
             Route::get('/render-status', [ProjectRenderController::class, 'status']);
 
+            // Stop the render in flight. A queued attempt ends here; a running
+            // one is asked to stop and the worker finishes the job, so this
+            // answers 202 rather than 200.
+            Route::post('/render/cancel', [ProjectRenderController::class, 'cancel']);
+
             // The rendered MP4, served only to its owner.
             Route::get('/video', [ProjectRenderController::class, 'video']);
             Route::get('/download', [ProjectRenderController::class, 'download']);

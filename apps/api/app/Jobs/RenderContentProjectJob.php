@@ -5,6 +5,7 @@ namespace App\Jobs;
 use App\Enums\DriveStatus;
 use App\Enums\RenderJobStatus;
 use App\Enums\RenderStatus;
+use App\Exceptions\Media\RenderCancelledException;
 use App\Exceptions\Media\RenderFailedException;
 use App\Exceptions\Media\TextDoesNotFitException;
 use App\Models\ContentProject;
@@ -59,6 +60,23 @@ class RenderContentProjectJob implements ShouldQueue
             return;
         }
 
+        /*
+         * Cancelled before a worker ever picked it up.
+         *
+         * This is checked as well as the status above, not instead of it,
+         * because the two can disagree for a moment: a cancellation arriving
+         * in a web request while this line runs writes the status a fraction
+         * too late to be read here. The flag is set in both the queued and
+         * the running case for exactly that reason, so whichever of the two
+         * wins the race, the encode still stops — here if it has not begun,
+         * and within a couple of seconds if it has.
+         */
+        if ($job->cancel_requested_at !== null) {
+            $this->recordCancelled($project, $job);
+
+            return;
+        }
+
         // Captured before the encode, from the inputs this attempt is about
         // to use. Recording it afterwards would hash edits made while FFmpeg
         // was running and wrongly call the fresh output current.
@@ -73,9 +91,13 @@ class RenderContentProjectJob implements ShouldQueue
         $project->forceFill(['render_status' => RenderStatus::Rendering])->save();
 
         try {
-            $result = $renderer->render($project, function (float $fraction) use ($job): void {
-                $this->reportProgress($job, $fraction);
-            });
+            $result = $renderer->render(
+                $project,
+                function (float $fraction) use ($job): void {
+                    $this->reportProgress($job, $fraction);
+                },
+                fn (): bool => $this->cancelWasRequested($job),
+            );
 
             $job->forceFill([
                 'status' => RenderJobStatus::Succeeded,
@@ -102,6 +124,13 @@ class RenderContentProjectJob implements ShouldQueue
             // read the project, and dispatching before the save would hand
             // them a project with nothing to upload.
             $this->dispatchPostActions($project, $job);
+        } catch (RenderCancelledException) {
+            // Returns rather than rethrows, deliberately. Letting this escape
+            // would put the job through $tries and start the encode again,
+            // which is the opposite of what was asked for.
+            $this->recordCancelled($project, $job);
+
+            return;
         } catch (TextDoesNotFitException|RenderFailedException $e) {
             // Expected, explainable failures — the message is user-facing.
             $this->fail($project, $job, $e->getMessage(), $e);
@@ -175,6 +204,44 @@ class RenderContentProjectJob implements ShouldQueue
                 'render_error' => 'The render did not complete. It may have exceeded the time limit.',
             ])->save();
         }
+    }
+
+    /**
+     * Has somebody asked for this attempt to stop?
+     *
+     * A fresh read every time: the request arrives in another process, so the
+     * in-memory model was loaded before it existed and will never show it.
+     * Only this one column is selected — the row also holds the FFmpeg log,
+     * and pulling that back every couple of seconds for the length of a render
+     * would be a lot of bytes to answer a yes-or-no question.
+     *
+     * FfmpegService decides how often this runs; see its ABORT_CHECK_SECONDS.
+     */
+    private function cancelWasRequested(RenderJob $job): bool
+    {
+        return RenderJob::whereKey($job->id)
+            ->whereNotNull('cancel_requested_at')
+            ->exists();
+    }
+
+    /**
+     * Stopped on request: a finished attempt, not a broken one.
+     *
+     * render_error stays null. A cancellation is not something that went
+     * wrong, and leaving an error behind would show a red banner on the next
+     * page load for a thing the person did on purpose.
+     */
+    private function recordCancelled(ContentProject $project, RenderJob $job): void
+    {
+        $job->forceFill([
+            'status' => RenderJobStatus::Cancelled,
+            'finished_at' => now(),
+        ])->save();
+
+        $project->forceFill([
+            'render_status' => RenderStatus::Cancelled,
+            'render_error' => null,
+        ])->save();
     }
 
     private function fail(ContentProject $project, RenderJob $job, string $message, Throwable $e): void

@@ -26,6 +26,7 @@ class RenderJob extends Model
             'post_actions' => 'array',
             'started_at' => 'datetime',
             'finished_at' => 'datetime',
+            'cancel_requested_at' => 'datetime',
             'output_duration' => 'float',
         ];
     }

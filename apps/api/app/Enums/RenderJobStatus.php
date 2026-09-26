@@ -13,6 +13,9 @@ enum RenderJobStatus: string
     case Succeeded = 'succeeded';
     case Failed = 'failed';
 
+    /** Stopped on request. See RenderStatus::Cancelled. */
+    case Cancelled = 'cancelled';
+
     public function isInFlight(): bool
     {
         return in_array($this, [self::Queued, self::Running], true);

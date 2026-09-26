@@ -47,6 +47,7 @@ export const RENDER_OPTIONS: [string, string][] = [
     // asked for in SQL. The most useful entry in this list.
     ["outdated", "Outdated"],
     ["failed", "Failed"],
+    ["cancelled", "Cancelled"],
 ];
 
 export const DRIVE_OPTIONS: [string, string][] = [
