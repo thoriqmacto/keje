@@ -376,6 +376,8 @@ Google — **secrets, API host only, never Vercel, never `NEXT_PUBLIC_*`**:
 - `GOOGLE_HEALTH_WARN_WITHIN_HOURS` — default `48`; how early the countdown starts warning.
 - `GOOGLE_HEALTH_ALERT_EMAIL` — where connection alerts go. Blank falls back to the account's own address.
 - `GOOGLE_HEALTH_ALERT_REPEAT_HOURS` — default `24`; how long before the same unresolved problem is raised again.
+- `GOOGLE_DRIVE_RESERVE_BYTES` — default 1 GiB; headroom Keje never spends in any account. See [Backing up to several Drive accounts](#backing-up-to-several-drive-accounts).
+- `GOOGLE_DRIVE_QUOTA_TTL_MINUTES` — default `60`; how long a cached quota is trusted.
 
 ### `apps/web/.env.local`
 See `apps/web/.env.local.example`.
@@ -701,6 +703,7 @@ GET    /content-projects/{uuid}/background     artwork, for the preview
 
 POST   /content-projects/{uuid}/render         202, queues the render
 POST   /content-projects/{uuid}/render/cancel  202, stops it; 409 if nothing is running
+DELETE /content-projects/{uuid}/drive         trash this project's backup and forget it
 GET    /content-projects/stats                 account-wide counts for the dashboard
 GET    /content-projects/{uuid}/render-status  status + progress
 GET    /content-projects/{uuid}/video          stream the MP4
@@ -1261,6 +1264,148 @@ The channel's own uploads playlist (the `UU…` id YouTube maintains automatical
 
 ---
 
+## Backing up to several Drive accounts
+
+A free Google account holds **15 GB, shared with Gmail and Photos**. A rendered
+lecture is a few hundred megabytes. So the ceiling on how much of a course Keje
+can keep was never a Keje limit — it was one account's quota, and when that
+filled up there was nothing to do about it.
+
+Drive is a **pool of accounts** now. **Drive → Backup storage** shows every
+connected account with its own quota bar, the pooled total, and how much is
+still waiting to be backed up.
+
+### Adding an account
+
+**Settings → Integrations → Connect Google Drive**, and pick a *different*
+Google account on the consent screen. There is nothing to type: Google offers
+whichever accounts the browser is signed in to.
+
+Connecting the same account twice does not create a second entry. Keje asks
+Google who just consented before storing anything, and a repeat lands on the
+existing row as a refresh — two rows for one account would report the same
+quota twice and double the pool's apparent free space, which is exactly the
+number you are about to trust.
+
+> **While the consent screen is in Testing**, every account you add must also
+> be on that screen's test-user list in the Google Cloud console, and each one
+> gets its own seven-day refresh-token clock. See
+> [Knowing before it breaks](#knowing-before-it-breaks).
+
+### How an account is chosen
+
+Accounts fill **in order**, lowest *fill order* first. Keje re-reads every
+quota from Google immediately before an upload, then picks the first account
+that can take the file with the reserve intact. **Fill earlier** / **Fill
+later** on each card changes that order.
+
+Filling in a fixed order rather than spreading across accounts is deliberate: a
+course ends up contiguous in one Drive instead of scattered across three, which
+matters when you go looking for it by hand.
+
+`GOOGLE_DRIVE_RESERVE_BYTES` (default 1 GiB) is headroom Keje never spends. It
+is a guest in an account that also holds somebody's mail — a Drive filled to
+the last byte stops Gmail receiving, and the thing that did the filling would
+rightly get the blame.
+
+When no account can take a file, the backup fails with the shortfall named and
+**is not retried**. Every other backup failure is worth a retry; this one never
+is, because three more attempts will re-measure every account and fail
+identically. Add an account, or free space in one already connected, and press
+**Retry backup**.
+
+### Three things these numbers are not
+
+Worth stating plainly, because two of them look like arithmetic bugs and the
+third looks like a missing feature:
+
+1. **The quota is not Keje's.** It covers the whole Google account — Drive,
+   Gmail and Photos. Free space can shrink with no involvement from Keje at
+   all, so every figure is a snapshot, never a reservation.
+
+2. **The file list and the usage figure answer different questions.** Usage is
+   the whole account; the file list is only Keje's own backups, because the
+   grant is `drive.file` and Keje cannot see anything else. They will not add
+   up, and the page labels both rather than letting you conclude the maths is
+   broken.
+
+3. **The pool is not one drive.** 12 GB free across three accounts will not
+   take an 11 GB file. That is why **Largest single file** is shown beside the
+   total — it is the roomiest *one* account, and it is what an upload is
+   actually measured against. A total alone would promise something that fails
+   at upload time.
+
+And one thing it cannot do: **a backup cannot be moved between accounts.** Each
+Google account owns what it stores, so moving means downloading and
+re-uploading. Spillover is decided once, when the backup is made.
+
+### Managing backups
+
+| Action | Where | What happens |
+|---|---|---|
+| Rename | Drive → account → **Show backups** → **Rename** | Renames the Drive file, and the project's stored name with it |
+| Remove one file | Drive → account → **Show backups** → **Remove** | Moves it to the Drive trash |
+| Remove a project's backup | Project → Backup and publish → **Remove backup** | Trashes the file **and** clears the project's Drive columns |
+| Disconnect an account | Drive → account → **Disconnect** | Leaves every other account, and every file, alone |
+
+**Removal is a trash, not a delete.** Google keeps a trashed file recoverable
+for 30 days from Drive's own interface. That is the right default here because
+the local render is pruned once a backup succeeds — so for a finished project
+the Drive copy is often the only copy. Emptying the trash is the account
+owner's decision, never Keje's. Space is not reclaimed until they do.
+
+Prefer **Remove backup** on the project over removing the file from the list.
+Both trash the file; only the project-scoped one also clears `drive_status`,
+`drive_file_id`, the name and the link, so the project honestly reads as not
+backed up and can be backed up again. Trashing through the file list alone
+leaves the project claiming a copy that is in the bin.
+
+Every mutation is authorised twice over: the token used is always one of your
+own stored grants, and the file must sit inside Keje's backup folder in that
+account. `drive.file` already limits a token to files Keje created; the folder
+check stops the backups endpoints becoming a general handle on everything Keje
+has ever created there.
+
+### Disconnecting an account that holds backups
+
+Allowed, and reported. Projects backed up to it keep their `drive_file_id` and
+lose the account link, so the studio can say the backup exists somewhere Keje
+can no longer reach rather than claiming it never happened. The message names
+how many. Reconnect that account to manage them again, or delete the files from
+Google Drive directly.
+
+### YouTube is still one account
+
+Deliberately. Publishing a lecture to the wrong channel cannot be undone, so
+the database enforces exactly one YouTube connection per user — connecting
+YouTube again replaces the existing grant rather than adding beside it.
+
+That guarantee survived relaxing the Drive constraint only because of an
+implementation detail worth knowing if you touch the schema: the unique key is
+`(user_id, service, account_key)`, and `account_key` is `NOT NULL` with a
+defined value for every row — `''` for YouTube, the email for Drive, the row's
+uuid for a Drive account Google has not named yet. Keying on
+`google_account_email` instead would have been enough for Drive and would have
+silently removed the YouTube guarantee, because MySQL permits duplicate `NULL`s
+in a unique index.
+
+### Keeping the figures current
+
+`drive:storage` re-reads every account's quota and runs every six hours from
+the scheduler — so it needs the same cron entry as the health check, per
+[The scheduler](#the-scheduler).
+
+```bash
+php artisan drive:storage            # every account, every user
+php artisan drive:storage --user=1   # one account holder
+```
+
+The upload path measures for itself before choosing, so this is not what makes
+a backup land somewhere it fits. What it buys is a Drive page that is true when
+you open it, and a "nearly full" warning that arrives before an upload rather
+than during one. **Re-read from Google** on the Drive page does the same thing
+on demand.
+
 ## Connected Google data
 
 Once a connection exists, Keje reads what those APIs can tell it and uses it instead of asking you to type ids.
@@ -1268,7 +1413,8 @@ Once a connection exists, Keje reads what those APIs can tell it and uses it ins
 | Where | What it shows |
 |---|---|
 | Settings → Integrations, YouTube | Granted capabilities, channel avatar/name/handle, subscriber, video and view counts, playlists, recent uploads |
-| Settings → Integrations, Drive | Google account, storage used vs. limit, the Keje backup folder, recent backups |
+| Settings → Integrations, Drive | Google account, storage used vs. limit, the Keje backup folder |
+| Drive | Every connected account with its quota, the pooled total, and the backups in each — see [Backing up to several Drive accounts](#backing-up-to-several-drive-accounts) |
 | New Content | The destination channel, a playlist chooser, a category chooser, a language chooser |
 | Project detail | The resolved destination — playlist, category and privacy by name — before the upload button |
 | Topics | A playlist chooser instead of a raw `PLxxxx` field |

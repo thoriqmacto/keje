@@ -75,6 +75,30 @@ class GoogleClientFactory
             );
         }
 
+        return $this->forConnection($connection);
+    }
+
+    /**
+     * A client authenticated as one specific stored grant.
+     *
+     * The form everything Drive-shaped needs now that a user can hold several
+     * Drive accounts. forUser() picks an account for you, which is fine for
+     * "does Drive work at all" and wrong for anything touching a particular
+     * file: a backup lives in exactly one account, and the other account's
+     * token cannot read it, let alone rename it.
+     *
+     * @throws GoogleNotConnectedException
+     */
+    public function forConnection(GoogleConnection $connection): Client
+    {
+        if (blank($connection->refresh_token)) {
+            throw new GoogleNotConnectedException(
+                $connection->service->label().' is not connected. '
+                .'Connect it from Settings → Integrations.',
+            );
+        }
+
+        $service = $connection->service;
         $client = $this->base($service);
 
         if ($connection->needsRefresh()) {

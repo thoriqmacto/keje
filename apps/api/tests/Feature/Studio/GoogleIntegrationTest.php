@@ -11,6 +11,8 @@ use App\Jobs\UploadVideoToYouTubeJob;
 use App\Models\ContentProject;
 use App\Models\GoogleConnection;
 use App\Models\User;
+use App\Services\Google\DriveQuotaSync;
+use App\Services\Google\DriveStoragePool;
 use App\Services\Google\GoogleClientFactory;
 use App\Services\Google\GoogleDriveService;
 use App\Services\Google\GoogleNotConnectedException;
@@ -598,15 +600,21 @@ class GoogleIntegrationTest extends TestCase
         @mkdir(dirname($path), 0775, true);
         file_put_contents($path, 'x');
 
+        $connection = $this->connect($user, GoogleService::Drive);
+
+        // Addressed by connection rather than by user: with several Drive
+        // accounts attached, "the user's Drive client" is not a thing, and a
+        // backup can only be written with the token of the account holding it.
         $clients = Mockery::mock(GoogleClientFactory::class);
-        $clients->shouldReceive('forUser')
+        $clients->shouldReceive('forConnection')
             ->once()
-            ->with(Mockery::type(User::class), GoogleService::Drive)
+            ->with(Mockery::type(GoogleConnection::class))
             ->andThrow(new GoogleNotConnectedException('stop here'));
 
         $this->expectException(GoogleNotConnectedException::class);
 
-        (new GoogleDriveService($clients))->upload($user, $path, 'out.mp4');
+        (new GoogleDriveService($clients, app(DriveStoragePool::class), app(DriveQuotaSync::class)))
+            ->upload($connection, $path, 'out.mp4');
     }
 
     #[Test]
@@ -652,7 +660,11 @@ class GoogleIntegrationTest extends TestCase
         $this->connect($user, GoogleService::Drive);
         $project = $this->renderedProject($user);
 
+        $connection = $user->googleConnectionFor(GoogleService::Drive);
+
         $drive = Mockery::mock(GoogleDriveService::class);
+        // Which account, chosen against a freshly measured quota.
+        $drive->shouldReceive('accountFor')->once()->andReturn($connection);
         $drive->shouldReceive('upload')->once()->andReturn([
             'id' => 'drive-file-123',
             'name' => 'kajian.mp4',
@@ -665,6 +677,9 @@ class GoogleIntegrationTest extends TestCase
         $this->assertSame(DriveStatus::Uploaded, $project->drive_status);
         $this->assertSame('drive-file-123', $project->drive_file_id);
         $this->assertNotNull($project->drive_uploaded_at);
+        // Which Drive holds it, without which a rename or a delete has no
+        // idea whose token to use.
+        $this->assertSame($connection->id, $project->drive_connection_id);
     }
 
     #[Test]
@@ -675,6 +690,8 @@ class GoogleIntegrationTest extends TestCase
         $project = $this->renderedProject($user);
 
         $drive = Mockery::mock(GoogleDriveService::class);
+        $drive->shouldReceive('accountFor')->once()
+            ->andReturn($user->googleConnectionFor(GoogleService::Drive));
         $drive->shouldReceive('upload')->once()
             ->andThrow(new GoogleNotConnectedException('Please reconnect Google Drive.'));
 

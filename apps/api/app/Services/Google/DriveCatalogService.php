@@ -3,6 +3,7 @@
 namespace App\Services\Google;
 
 use App\Enums\GoogleService;
+use App\Models\GoogleConnection;
 use App\Models\User;
 use Google\Service\Drive;
 use Throwable;
@@ -39,7 +40,22 @@ class DriveCatalogService
      */
     public function about(User $user): array
     {
-        $about = $this->api($user)->about->get(['fields' => self::ABOUT_FIELDS]);
+        return $this->aboutForConnection($this->connection($user));
+    }
+
+    /**
+     * The same, for one named account.
+     *
+     * Every read is addressable per connection now that a user can hold
+     * several Drive accounts. The user-shaped methods above stay as the
+     * "does Drive work at all" form and delegate here, so there is one
+     * implementation rather than two that drift.
+     *
+     * @return array<string, mixed>
+     */
+    public function aboutForConnection(GoogleConnection $connection): array
+    {
+        $about = $this->apiFor($connection)->about->get(['fields' => self::ABOUT_FIELDS]);
 
         $account = $about->getUser();
         $quota = $about->getStorageQuota();
@@ -78,8 +94,24 @@ class DriveCatalogService
      */
     public function backupFolder(User $user): ?array
     {
-        $drive = $this->api($user);
-        $configured = (string) config('services.drive.folder_id');
+        return $this->backupFolderForConnection($this->connection($user));
+    }
+
+    /** @return array<string, mixed>|null */
+    public function backupFolderForConnection(GoogleConnection $connection): ?array
+    {
+        $drive = $this->apiFor($connection);
+
+        /*
+         * GOOGLE_DRIVE_FOLDER_ID names a folder in exactly one account, so it
+         * is honoured only for the first account in the fill order. Applying
+         * it to every account would have each of them look up an id that
+         * cannot exist in their Drive, fail, and fall back to the name —
+         * after a wasted round trip apiece.
+         */
+        $configured = $connection->priority <= 1
+            ? (string) config('services.drive.folder_id')
+            : '';
 
         try {
             if (filled($configured)) {
@@ -118,6 +150,18 @@ class DriveCatalogService
      */
     public function backups(User $user, string $folderId, ?string $pageToken = null, int $limit = 20): array
     {
+        return $this->backupsForConnection($this->connection($user), $folderId, $pageToken, $limit);
+    }
+
+    /**
+     * @return array{data: list<array<string, mixed>>, next_page_token: ?string}
+     */
+    public function backupsForConnection(
+        GoogleConnection $connection,
+        string $folderId,
+        ?string $pageToken = null,
+        int $limit = 20,
+    ): array {
         $params = [
             'q' => "'{$folderId}' in parents and trashed = false",
             'fields' => 'nextPageToken,files('.self::FILE_FIELDS.')',
@@ -129,7 +173,7 @@ class DriveCatalogService
             $params['pageToken'] = $pageToken;
         }
 
-        $response = $this->api($user)->files->listFiles($params);
+        $response = $this->apiFor($connection)->files->listFiles($params);
 
         $files = [];
 
@@ -164,8 +208,30 @@ class DriveCatalogService
         ];
     }
 
-    private function api(User $user): Drive
+    private function apiFor(GoogleConnection $connection): Drive
     {
-        return new Drive($this->clients->forUser($user, GoogleService::Drive));
+        return new Drive($this->clients->forConnection($connection));
+    }
+
+    /**
+     * The account the user-shaped methods mean.
+     *
+     * The highest-priority Drive account, which is the one "is Drive working"
+     * is asking about. Anything addressing a particular file takes a
+     * connection instead — see DriveBackupManager.
+     *
+     * @throws GoogleNotConnectedException
+     */
+    private function connection(User $user): GoogleConnection
+    {
+        $connection = $user->googleConnectionFor(GoogleService::Drive);
+
+        if ($connection === null) {
+            throw new GoogleNotConnectedException(
+                'Google Drive is not connected. Connect it from Settings → Integrations.',
+            );
+        }
+
+        return $connection;
     }
 }

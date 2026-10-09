@@ -3,6 +3,7 @@
 namespace App\Jobs;
 
 use App\Enums\DriveStatus;
+use App\Exceptions\Google\DriveStorageExhaustedException;
 use App\Models\ContentProject;
 use App\Services\Google\GoogleDriveService;
 use App\Services\Google\GoogleNotConnectedException;
@@ -67,8 +68,16 @@ class UploadVideoToGoogleDriveJob implements ShouldQueue
         ])->save();
 
         try {
+            // Which account, decided against a freshly read quota. Throws
+            // when nothing can take the file, which is the "add another
+            // account" case rather than something to retry.
+            $account = $drive->accountFor(
+                $project->user,
+                (int) ($project->output_size ?: filesize($disk->path($project->output_path))),
+            );
+
             $result = $drive->upload(
-                user: $project->user,
+                account: $account,
                 absolutePath: $disk->path($project->output_path),
                 filename: $this->filename($project),
             );
@@ -79,6 +88,9 @@ class UploadVideoToGoogleDriveJob implements ShouldQueue
                 'drive_file_name' => $result['name'],
                 'drive_web_view_link' => $result['web_view_link'],
                 'drive_uploaded_at' => now(),
+                // Which Drive holds it. Without this a rename or a delete has
+                // no idea whose token to use.
+                'drive_connection_id' => $account->id,
                 'drive_error' => null,
             ])->save();
 
@@ -93,6 +105,15 @@ class UploadVideoToGoogleDriveJob implements ShouldQueue
                     'exception' => $e,
                 ]);
             }
+        } catch (DriveStorageExhaustedException $e) {
+            /*
+             * Recorded, never rethrown. Every other backup failure is worth a
+             * retry — a blip, a stale token, a transient Google error — and
+             * this one is the opposite: three more attempts will not make the
+             * file fit, they will just re-measure every account and fail
+             * again. The message already names the shortfall and the fix.
+             */
+            $this->fail($project, $e->getMessage());
         } catch (GoogleNotConnectedException $e) {
             $this->fail($project, $e->getMessage());
         } catch (Throwable $e) {

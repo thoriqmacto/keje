@@ -43,6 +43,7 @@ import { ThumbnailPicker } from "@/components/studio/thumbnail-picker";
 import { useDocumentTitle } from "@/lib/use-document-title";
 import {
     apiErrorMessage,
+    removeProjectDriveBackup,
     cancelRender,
     duplicateProject,
     backupToDrive,
@@ -655,6 +656,17 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
                             }
                         }}
                         onChanged={() => void mutate()}
+                        onRemoveDriveBackup={async () => {
+                            try {
+                                const { message } = await removeProjectDriveBackup(projectId);
+                                toast.success(message);
+                                await mutate();
+                            } catch (error) {
+                                toast.error(
+                                    apiErrorMessage(error, "Could not remove the Drive backup."),
+                                );
+                            }
+                        }}
                         onYouTube={async () => {
                             try {
                                 await uploadToYouTube(projectId, metadata);
@@ -711,15 +723,44 @@ export default function ProjectDetailClient({ projectId }: { projectId: string }
 function PublicationCard({
     project,
     onDrive,
+    onRemoveDriveBackup,
     onYouTube,
     onChanged,
 }: {
     project: ContentProject;
     onDrive: () => Promise<void>;
+    onRemoveDriveBackup: () => Promise<void>;
     onYouTube: () => Promise<void>;
     onChanged: () => void;
 }) {
     const [syncing, setSyncing] = useState(false);
+    const [removing, setRemoving] = useState(false);
+
+    /**
+     * Trash the Drive copy and forget it.
+     *
+     * Confirmed, because the local render is pruned once a backup succeeds —
+     * so for a finished project this is usually the last copy of the lecture,
+     * and the thirty-day trash window is the whole safety net.
+     */
+    async function onRemove() {
+        if (
+            !window.confirm(
+                "Move this project's Drive backup to the trash?\n\n" +
+                    "It can be restored from Google Drive for 30 days. The project will read as " +
+                    "not backed up, and can be backed up again.",
+            )
+        ) {
+            return;
+        }
+
+        setRemoving(true);
+        try {
+            await onRemoveDriveBackup();
+        } finally {
+            setRemoving(false);
+        }
+    }
 
     /** Read-only: never changes privacy, never re-uploads. */
     async function onSyncYouTube() {
@@ -781,7 +822,34 @@ function PublicationCard({
                                 Open in Drive
                             </a>
                         )}
+                        {/*
+                            Removing from here, rather than only from the Drive
+                            page, is what keeps the two sides in step: it
+                            trashes the file *and* clears this project's Drive
+                            columns, so the project honestly reads as not
+                            backed up and can be backed up again. Trashing it
+                            through the file list alone would leave the project
+                            claiming a copy that is in the bin.
+                        */}
+                        {project.drive.status === "uploaded" && (
+                            <Button
+                                size="sm"
+                                variant="outline"
+                                className="text-red-600 dark:text-red-400"
+                                disabled={removing}
+                                onClick={() => void onRemove()}
+                            >
+                                {removing ? "Removing…" : "Remove backup"}
+                            </Button>
+                        )}
                     </div>
+                    {project.drive.status === "uploaded" && project.render.media_pruned_at && (
+                        <p className="text-xs text-amber-700 dark:text-amber-400">
+                            The local files were removed after this backup, so the Drive copy is
+                            the only one. Removing it moves it to the Drive trash, recoverable
+                            there for 30 days.
+                        </p>
+                    )}
                 </div>
 
                 <div className="flex flex-col gap-2 border-t pt-4">
