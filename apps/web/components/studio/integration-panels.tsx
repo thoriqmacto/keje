@@ -7,7 +7,6 @@ import {
     getDriveAbout,
     getYouTubeChannel,
     googleKeys,
-    listDriveBackups,
     listYouTubePlaylists,
     listYouTubeRecentUploads,
     refreshDriveCatalog,
@@ -251,18 +250,12 @@ export function DriveIntegrationDetail({ integrations }: { integrations: GoogleI
     const connected = integrations.drive.connected;
 
     const about = useSWR(connected ? googleKeys.driveAbout : null, getDriveAbout, SWR);
-    const backups = useSWR(
-        connected ? googleKeys.driveBackups : null,
-        () => listDriveBackups(),
-        SWR,
-    );
-
     if (!connected) return null;
 
     async function refresh() {
         try {
             await refreshDriveCatalog();
-            await Promise.all([about.mutate(), backups.mutate()]);
+            await about.mutate();
             toast.success("Refreshed from Drive.");
         } catch (error) {
             toast.error(apiErrorMessage(error, "Could not refresh from Drive."));
@@ -320,49 +313,16 @@ export function DriveIntegrationDetail({ integrations }: { integrations: GoogleI
                         </dd>
                     </dl>
 
-                    <div className="flex flex-col gap-2 border-t pt-4">
-                        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                            Recent Keje backups
-                        </p>
-                        {/* Deliberately not "your Drive files": the drive.file
-                            scope only ever shows what Keje itself created. */}
-                        <p className="text-xs text-muted-foreground">
-                            Keje-accessible files only — it never requests access to the rest of
-                            your Drive.
-                        </p>
-
-                        {backups.isLoading && <p className="text-xs text-muted-foreground">Loading…</p>}
-                        {backups.error && (
-                            <SectionError
-                                label="Could not load backups."
-                                onRetry={() => void backups.mutate()}
-                            />
-                        )}
-                        {backups.data?.data.length === 0 && (
-                            <p className="text-xs text-muted-foreground">No backups yet.</p>
-                        )}
-                        {backups.data?.data.slice(0, 5).map((file) => (
-                            <div key={file.id} className="flex items-baseline justify-between gap-3 text-sm">
-                                <span className="min-w-0 truncate">
-                                    {file.web_view_link ? (
-                                        <a
-                                            href={file.web_view_link}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            className="hover:underline"
-                                        >
-                                            {file.name}
-                                        </a>
-                                    ) : (
-                                        file.name
-                                    )}
-                                </span>
-                                <span className="shrink-0 text-xs text-muted-foreground">
-                                    {formatBytes(file.size)} · {formatDateTime(file.created_at)}
-                                </span>
-                            </div>
-                        ))}
-                    </div>
+                    {/* The file list and its actions live on the Drive
+                        page, not here. Settings manages the connection;
+                        managing backups is a different job, and two lists
+                        would be two places to keep in step. The pooled total
+                        lives there too, because it is about every connected
+                        account and this panel only describes one. */}
+                    <p className="border-t pt-4 text-xs text-muted-foreground">
+                        Backups, storage across every connected account, and the option to add
+                        another are on the Drive page.
+                    </p>
                 </>
             )}
 

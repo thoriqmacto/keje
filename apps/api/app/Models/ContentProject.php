@@ -99,6 +99,20 @@ class ContentProject extends Model
         return $this->belongsTo(Speaker::class);
     }
 
+    /**
+     * The Drive account holding this project's backup.
+     *
+     * Null for a project never backed up, and also for one whose account has
+     * since been disconnected — the file may well still exist in somebody's
+     * Drive, but Keje no longer holds a token for it. Those two cases look
+     * the same here and are told apart by drive_file_id, which survives the
+     * disconnection.
+     */
+    public function driveConnection(): BelongsTo
+    {
+        return $this->belongsTo(GoogleConnection::class, 'drive_connection_id');
+    }
+
     public function renderJobs(): HasMany
     {
         return $this->hasMany(RenderJob::class);

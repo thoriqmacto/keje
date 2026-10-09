@@ -616,6 +616,81 @@ export type DriveBackupFile = {
     web_view_link: string | null;
 };
 
+/**
+ * One connected Google Drive account.
+ *
+ * Several of these make up the pool Keje backs up into. A free Google account
+ * holds 15 GB shared with Gmail and Photos, which makes one account a ceiling
+ * on how much of a course fits rather than a comfortable amount.
+ */
+export type DriveAccount = {
+    id: string;
+    email: string | null;
+    name: string | null;
+    /** What the user called it; null falls back to the email. */
+    label: string | null;
+    display_name: string;
+    /** Lower fills first. */
+    priority: number;
+    limit: number | null;
+    usage: number | null;
+    free: number | null;
+    unlimited: boolean;
+    /**
+     * Free space minus the reserve Keje leaves alone, which is what a backup
+     * can actually have. Null when unmeasured or unlimited — never 0, because
+     * "unknown" and "full" need different answers.
+     */
+    usable: number | null;
+    percent_used: number | null;
+    checked_at: string | null;
+    /** False until something has asked Google, when every figure above is unknown. */
+    measured: boolean;
+    /** The last connection-health check did not find this account broken. */
+    healthy: boolean;
+};
+
+export type DriveStorageTotals = {
+    accounts: number;
+    measured_accounts: number;
+    includes_unlimited: boolean;
+    limit: number | null;
+    usage: number;
+    usable: number | null;
+    /**
+     * The biggest single file the pool could take — the roomiest *one*
+     * account, not the sum. 12 GB spread over three accounts cannot hold an
+     * 11 GB file, and a total implying otherwise is a lie found at upload time.
+     */
+    largest_single_file: number | null;
+};
+
+export type DriveStoragePending = {
+    projects: number;
+    bytes: number;
+    largest_project_bytes: number;
+    /** Null while nothing is measured, or an account is unlimited. */
+    fits: boolean | null;
+    shortfall: number | null;
+    /** The failure a total hides: everything fits, but the biggest file does not. */
+    largest_project_fits: boolean | null;
+};
+
+export type DriveStoragePool = {
+    accounts: DriveAccount[];
+    totals: DriveStorageTotals;
+    pending: DriveStoragePending;
+};
+
+/** Backups in one account. Drive paginates per request, so does this. */
+export type DriveBackupGroup = {
+    account: { id: string; email: string | null; display_name: string };
+    files: DriveBackupFile[];
+    next_page_token: string | null;
+    /** One account failing must not blank the others. */
+    error: string | null;
+};
+
 /** Google's cursor, passed through rather than faked as an offset. */
 export type Paginated<T> = { data: T[]; next_page_token: string | null };
 

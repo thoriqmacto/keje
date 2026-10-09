@@ -74,8 +74,22 @@ class GoogleOAuthService
             throw new RuntimeException('Google rejected the authorization: '.$token['error']);
         }
 
-        $connection = $user->googleConnectionFor($service)
-            ?? new GoogleConnection(['user_id' => $user->id, 'service' => $service]);
+        /*
+         * Which row this grant lands on, and that differs by service.
+         *
+         * YouTube replaces: a user has one channel they publish to, and a
+         * second YouTube connection is how a lecture ends up on the wrong
+         * one. Drive appends, because the whole point of adding an account is
+         * that the first one is nearly full — replacing it would silently
+         * discard the account holding every backup made so far.
+         *
+         * For Drive the row is only resolved after Google says who consented,
+         * which is why this is a separate step rather than an ?? expression.
+         */
+        $connection = $service === GoogleService::Drive
+            ? new GoogleConnection(['user_id' => $user->id, 'service' => $service])
+            : ($user->googleConnectionFor($service)
+                ?? new GoogleConnection(['user_id' => $user->id, 'service' => $service]));
 
         // Google returns a refresh token only on first consent (or re-consent).
         // Never overwrite a good stored one with null.
@@ -122,7 +136,91 @@ class GoogleOAuthService
             $this->syncYouTubeChannel($user, $connection);
         }
 
+        if ($service === GoogleService::Drive) {
+            $connection = $this->settleDriveAccount($user, $connection);
+        }
+
         return $connection->refresh();
+    }
+
+    /**
+     * Work out which Google account just consented, and keep one row for it.
+     *
+     * Google's consent screen lets somebody pick any account they are signed
+     * in to, and the authorization code says nothing about which. So the only
+     * way to know is to ask, and asking matters for two reasons:
+     *
+     *  - **Re-consenting the same account must not create a second row.** Two
+     *    connections to one Google account would show the same quota twice
+     *    and double the pool's apparent free space, which is exactly the
+     *    number somebody is about to trust. The fresh grant is merged onto
+     *    the existing row instead, and the duplicate dropped.
+     *
+     *  - **A new account needs a place in the fill order.** It goes last, so
+     *    adding an account never changes where the next backup would have
+     *    gone.
+     *
+     * Identification failing is not fatal. The grant is real and works; it is
+     * the label that is missing, and the quota sync will fill it in on its
+     * next pass.
+     */
+    private function settleDriveAccount(User $user, GoogleConnection $connection): GoogleConnection
+    {
+        try {
+            $identity = app(DriveQuotaSync::class)->identify($connection);
+        } catch (Throwable) {
+            return $connection;
+        }
+
+        $email = $identity['email'];
+
+        if (blank($email)) {
+            return $connection;
+        }
+
+        $existing = $user->googleConnections()
+            ->forService(GoogleService::Drive)
+            ->where('google_account_email', $email)
+            ->whereKeyNot($connection->getKey())
+            ->first();
+
+        if ($existing !== null) {
+            // Same account, consented again. Move the new credentials onto the
+            // row that already has this account's label, priority and the
+            // projects pointing at it, then drop the row just created.
+            $existing->forceFill([
+                'access_token' => $connection->access_token,
+                'refresh_token' => $connection->refresh_token,
+                'token_expires_at' => $connection->token_expires_at,
+                'scopes' => $connection->scopes,
+                'connected_at' => $connection->connected_at,
+                'account_name' => $identity['name'] ?: $existing->account_name,
+                'health_status' => null,
+                'health_message' => null,
+                'health_guidance' => null,
+                'health_checked_at' => null,
+                'health_failing_since' => null,
+                'health_alerted_at' => null,
+                'health_alerted_status' => null,
+            ])->save();
+
+            $connection->delete();
+
+            return $existing;
+        }
+
+        $connection->forceFill([
+            'google_account_email' => $email,
+            'account_name' => $identity['name'],
+            // Last in line. An account added because another is nearly full
+            // should not take over from the one still being filled.
+            'priority' => (int) $user->googleConnections()
+                ->forService(GoogleService::Drive)
+                ->whereKeyNot($connection->getKey())
+                ->max('priority') + 1,
+        ])->save();
+
+        return $connection;
     }
 
     /**
@@ -153,6 +251,37 @@ class GoogleOAuthService
             }
         } catch (Throwable) {
             // Leaves the channel unknown, which the UI reports as unverified.
+        }
+    }
+
+    /**
+     * Drop one specific Drive account, leaving the others connected.
+     *
+     * The form the Drive page needs: "disconnect Drive" is the wrong question
+     * once several accounts are attached, because the one that is nearly full
+     * is usually the one somebody wants to keep and the spare is the one they
+     * are tidying away.
+     *
+     * Projects backed up to this account keep their drive_file_id and lose
+     * their drive_connection_id, by the foreign key's nullOnDelete. That is
+     * the honest outcome: the file is still in somebody's Drive, Keje simply
+     * no longer holds a token for it, and the UI can say so instead of
+     * claiming the backup never happened.
+     */
+    public function disconnectAccount(GoogleConnection $connection): void
+    {
+        try {
+            $this->clients->forConnection($connection)->revokeToken($connection->refresh_token);
+        } catch (Throwable) {
+            // Already revoked or unreachable — either way, drop our copy.
+        }
+
+        $user = $connection->user;
+
+        $connection->delete();
+
+        if ($user !== null) {
+            $this->cache->flush($user, $connection->service);
         }
     }
 

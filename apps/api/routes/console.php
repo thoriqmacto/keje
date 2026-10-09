@@ -35,3 +35,24 @@ Schedule::command('google:health')
     ->hourly()
     ->withoutOverlapping()
     ->runInBackground();
+
+/*
+|--------------------------------------------------------------------------
+| Keeping the Drive storage figures true
+|--------------------------------------------------------------------------
+|
+| A Google account's quota is shared with Gmail and Photos, so it moves
+| without Keje doing anything at all. Every six hours is enough: the upload
+| path re-reads the quota itself before choosing an account, so this is not
+| what makes a backup land somewhere it fits. What it buys is a Drive page
+| that is true when somebody opens it, and a "nearly full" warning that
+| arrives before an upload rather than during one.
+|
+| withoutOverlapping because each account is a round trip to Google, and a
+| slow response must not stack runs.
+|
+*/
+Schedule::command('drive:storage')
+    ->everySixHours()
+    ->withoutOverlapping()
+    ->runInBackground();

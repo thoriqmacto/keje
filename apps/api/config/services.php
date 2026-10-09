@@ -99,6 +99,27 @@ return [
         'folder_name' => env('GOOGLE_DRIVE_FOLDER_NAME', 'Keje YouTube Outputs'),
         // Resumable upload chunk size. Must be a multiple of 256 KiB.
         'chunk_size' => (int) env('GOOGLE_DRIVE_CHUNK_SIZE', 8 * 1024 * 1024),
+
+        /*
+         * Headroom left untouched in every connected account.
+         *
+         * Keje is a guest in an account that also holds somebody's mail and
+         * photos. A Drive filled to the last byte stops Gmail from receiving,
+         * and the person would rightly blame whatever did the filling. One
+         * gibibyte of a fifteen-gibibyte free account is about seven per cent
+         * — cheap insurance against breaking something that is not Keje's.
+         */
+        'reserve_bytes' => (int) env('GOOGLE_DRIVE_RESERVE_BYTES', 1024 * 1024 * 1024),
+
+        /*
+         * How stale a cached quota may be before the Drive page re-reads it.
+         *
+         * The quota is shared with Gmail and Photos, so it moves without Keje
+         * doing anything. Long enough that opening the page is not a round
+         * trip per account; short enough that "nearly full" is still true
+         * when it is acted on.
+         */
+        'quota_ttl_minutes' => (int) env('GOOGLE_DRIVE_QUOTA_TTL_MINUTES', 60),
     ],
 
     'youtube' => [

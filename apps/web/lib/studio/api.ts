@@ -7,6 +7,8 @@ import type {
     ContentTopic,
     DriveAbout,
     DriveBackupFile,
+    DriveBackupGroup,
+    DriveStoragePool,
     GoogleHealthReport,
     OldVideoDisposition,
     RenderStatusPayload,
@@ -357,6 +359,8 @@ export const googleKeys = {
     recentUploads: "google:youtube:recent-uploads",
     driveAbout: "google:drive:about",
     driveBackups: "google:drive:backups",
+    /* The pool: every connected account, the total, and what is still to go. */
+    drivePool: "google:drive:pool",
 } as const;
 
 export async function getYouTubeChannel(): Promise<YouTubeChannelProfile | null> {
@@ -407,19 +411,96 @@ export async function getDriveAbout(): Promise<DriveAbout> {
     return data.data;
 }
 
-export async function listDriveBackups(
-    pageToken?: string,
-): Promise<{ data: DriveBackupFile[]; nextPageToken: string | null }> {
-    const { data } = await api.get<{
-        data: DriveBackupFile[];
-        meta: { next_page_token: string | null };
-    }>("/integrations/drive/backups", { params: pageToken ? { page_token: pageToken } : {} });
-
-    return { data: data.data, nextPageToken: data.meta?.next_page_token ?? null };
-}
-
 export async function refreshDriveCatalog(): Promise<void> {
     await api.post("/integrations/drive/refresh");
+}
+
+// ── The Drive storage pool ──────────────────────────────────────────────────
+
+/**
+ * Every connected Drive account, with the pooled total.
+ *
+ * A read of stored quota figures, never a live measurement: the page shows
+ * every account at once and a Google round trip per account would make
+ * opening it wait on somebody else's network. Each account carries its own
+ * `checked_at` so a stale figure can be seen for what it is.
+ */
+export async function getDrivePool(): Promise<DriveStoragePool> {
+    const { data } = await api.get<{ data: DriveStoragePool }>("/integrations/drive/accounts");
+    return data.data;
+}
+
+/** Re-read every account's quota from Google now. Slow, and a button for it. */
+export async function refreshDrivePool(): Promise<{ data: DriveStoragePool; message: string }> {
+    const { data } = await api.post<{ data: DriveStoragePool; message: string }>(
+        "/integrations/drive/accounts/refresh",
+    );
+    return data;
+}
+
+/** Rename an account, or move it in the fill order. */
+export async function updateDriveAccount(
+    accountId: string,
+    changes: { label?: string | null; priority?: number },
+): Promise<DriveStoragePool> {
+    const { data } = await api.patch<{ data: DriveStoragePool }>(
+        `/integrations/drive/accounts/${accountId}`,
+        changes,
+    );
+    return data.data;
+}
+
+/** Disconnect one account, leaving the others. */
+export async function disconnectDriveAccount(
+    accountId: string,
+): Promise<{ data: DriveStoragePool; message: string }> {
+    const { data } = await api.delete<{ data: DriveStoragePool; message: string }>(
+        `/integrations/drive/accounts/${accountId}`,
+    );
+    return data;
+}
+
+/** Backups grouped by the account holding them. */
+export async function listDriveBackupsByAccount(perAccount = 20): Promise<DriveBackupGroup[]> {
+    const { data } = await api.get<{ data: { accounts: DriveBackupGroup[] } }>(
+        "/integrations/drive/backups",
+        { params: { per_account: perAccount } },
+    );
+    return data.data.accounts;
+}
+
+export async function renameDriveBackup(
+    accountId: string,
+    fileId: string,
+    name: string,
+): Promise<DriveBackupFile> {
+    const { data } = await api.patch<{ data: DriveBackupFile }>(
+        `/integrations/drive/accounts/${accountId}/backups/${fileId}`,
+        { name },
+    );
+    return data.data;
+}
+
+/** Moves the file to the Drive trash, where its owner can restore it. */
+export async function trashDriveBackup(
+    accountId: string,
+    fileId: string,
+): Promise<{ message: string }> {
+    const { data } = await api.delete<{ message: string }>(
+        `/integrations/drive/accounts/${accountId}/backups/${fileId}`,
+    );
+    return data;
+}
+
+/**
+ * Remove one project's backup and forget it.
+ *
+ * The form that keeps both sides in step: trashing through the file list
+ * leaves the project still claiming a Drive copy.
+ */
+export async function removeProjectDriveBackup(id: string): Promise<{ message: string }> {
+    const { data } = await api.delete<{ message: string }>(`/content-projects/${id}/drive`);
+    return data;
 }
 
 /**

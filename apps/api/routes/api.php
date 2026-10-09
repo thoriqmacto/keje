@@ -3,6 +3,7 @@
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\ContentProjectController;
 use App\Http\Controllers\Api\V1\ContentTopicController;
+use App\Http\Controllers\Api\V1\DriveAccountController;
 use App\Http\Controllers\Api\V1\DriveCatalogController;
 use App\Http\Controllers\Api\V1\FinishOutdatedController;
 use App\Http\Controllers\Api\V1\GoogleIntegrationController;
@@ -165,6 +166,10 @@ Route::prefix('v1')->group(function () {
             // Publication. Independent of each other and of the render, and
             // both explicitly triggered — rendering never publishes anything.
             Route::post('/drive', [ProjectPublicationController::class, 'drive']);
+
+            // Remove this project's backup and forget it, so the database and
+            // Drive stay in step. Trashes the file rather than deleting it.
+            Route::delete('/drive', [DriveAccountController::class, 'destroyProjectBackup']);
             Route::post('/youtube', [ProjectPublicationController::class, 'youtube']);
             // Retry playlist membership only — never re-uploads the video.
             Route::post('/youtube/playlist', [ProjectPublicationController::class, 'playlist']);
@@ -256,8 +261,34 @@ Route::prefix('v1')->group(function () {
 
         Route::prefix('/integrations/drive')->group(function () {
             Route::get('/about', [DriveCatalogController::class, 'about']);
-            Route::get('/backups', [DriveCatalogController::class, 'backups']);
             Route::post('/refresh', [DriveCatalogController::class, 'refresh']);
+
+            /*
+             * Drive is a pool of accounts, not one Drive. A free Google
+             * account holds fifteen gigabytes shared with Gmail and Photos,
+             * so the ceiling on how much of a course Keje can keep is one
+             * account's quota — and the answer to "it is nearly full" is
+             * another account beside it, not a bigger number anywhere.
+             */
+            Route::get('/accounts', [DriveAccountController::class, 'index']);
+            // Re-read every quota from Google now, rather than waiting for
+            // the scheduled pass.
+            Route::post('/accounts/refresh', [DriveAccountController::class, 'refresh']);
+            Route::patch('/accounts/{connection}', [DriveAccountController::class, 'update']);
+            Route::delete('/accounts/{connection}', [DriveAccountController::class, 'destroy']);
+
+            // Backups, grouped by the account holding them. Drive paginates
+            // per request and there is no cross-account cursor, so each
+            // account's slice carries its own token.
+            Route::get('/backups', [DriveAccountController::class, 'backups']);
+
+            /*
+             * Mutations are addressed through the account that holds the
+             * file, because a backup lives in exactly one Drive and another
+             * account's token cannot see it, let alone rename it.
+             */
+            Route::patch('/accounts/{connection}/backups/{fileId}', [DriveAccountController::class, 'renameBackup']);
+            Route::delete('/accounts/{connection}/backups/{fileId}', [DriveAccountController::class, 'destroyBackup']);
         });
     });
 });
