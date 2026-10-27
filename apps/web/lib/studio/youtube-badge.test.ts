@@ -140,3 +140,75 @@ test("no schedule of either kind shows nothing", () => {
 test("an unparseable plan is dropped rather than rendered as Invalid Date", () => {
     assert.equal(youtubeSchedule({ plannedPublishAt: "not a date" }, NOW), null);
 });
+
+// ── Two confirmed times, and which one is true ──────────────────────────────
+
+test("a schedule moved after upload shows where it was moved to", () => {
+    /*
+     * The bug this answers. scheduledAt is written by the upload and never
+     * again, so changing the schedule afterwards — through the metadata push,
+     * or in YouTube Studio with the sync picking it up — left the Studio
+     * table advertising the date the video was first uploaded with.
+     */
+    const schedule = youtubeSchedule(
+        {
+            scheduledAt: "2026-09-12T19:00:00Z",
+            remotePublishAt: "2026-10-01T09:00:00Z",
+            remoteStatus: "scheduled",
+        },
+        NOW,
+    );
+
+    assert.equal(schedule?.at, "2026-10-01T09:00:00Z");
+    assert.equal(schedule?.planned, false);
+});
+
+test("a published video stops advertising the schedule it was uploaded with", () => {
+    /*
+     * The case that makes "remote wins" mean remote wins outright rather than
+     * remote-if-present. YouTube holds no publish time once a video is live,
+     * and falling back to our frozen one would have the row promise a
+     * publication that already happened.
+     */
+    const schedule = youtubeSchedule(
+        {
+            scheduledAt: "2026-09-01T19:00:00Z",
+            remotePublishAt: null,
+            remoteStatus: "published",
+        },
+        NOW,
+    );
+
+    assert.equal(schedule, null);
+});
+
+test("a video YouTube cannot find keeps our own record instead of a stale remote one", () => {
+    /*
+     * The sync writes `unavailable` without touching the remote publish time,
+     * so whatever sits beside that status is the last thing seen and may be
+     * long gone. Our upload-time record is at least a fact about this
+     * project.
+     */
+    const schedule = youtubeSchedule(
+        {
+            scheduledAt: "2026-09-12T19:00:00Z",
+            remotePublishAt: "2026-01-01T00:00:00Z",
+            remoteStatus: "unavailable",
+        },
+        NOW,
+    );
+
+    assert.equal(schedule?.at, "2026-09-12T19:00:00Z");
+});
+
+test("before anything has been synced our own record still shows", () => {
+    // remoteStatus null means nobody has asked YouTube yet, which is most of
+    // a freshly uploaded video's life.
+    const schedule = youtubeSchedule(
+        { scheduledAt: "2026-09-12T19:00:00Z", remoteStatus: null, remotePublishAt: null },
+        NOW,
+    );
+
+    assert.equal(schedule?.at, "2026-09-12T19:00:00Z");
+    assert.equal(schedule?.planned, false);
+});

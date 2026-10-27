@@ -95,6 +95,24 @@ class ContentProjectSummaryResource extends JsonResource
                 'remote_synced_at' => $this->youtube_remote_synced_at?->toIso8601String(),
 
                 /*
+                 * The publish time YouTube currently holds, which is not
+                 * always the one above.
+                 *
+                 * `scheduled_at` is youtube_publish_at, written by the upload
+                 * and never again. Change a schedule afterwards — through
+                 * PATCH /youtube/metadata, or in YouTube Studio with the sync
+                 * picking it up — and the new time lands here while that
+                 * column keeps the original. Without this field the list
+                 * could only ever show the time the video was first uploaded
+                 * with, however many times it was moved since.
+                 *
+                 * Null is meaningful once remote_status is set: it says
+                 * YouTube is holding no publish time at all, which is what a
+                 * video that has already gone live looks like.
+                 */
+                'remote_publish_at' => $this->youtube_remote_publish_at?->toIso8601String(),
+
+                /*
                  * A correction in flight, so the list can say "Replacing…"
                  * rather than something alarming and untrue. The distinction
                  * that matters is `replacement_failed` with the video still

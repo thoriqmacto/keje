@@ -120,6 +120,12 @@ export type ContentProjectSummary = {
         remote_status: string | null;
         remote_label: string | null;
         remote_synced_at: string | null;
+        /**
+         * The publish time YouTube currently holds, which is not always
+         * `scheduled_at`: that one is frozen at upload, and a schedule changed
+         * afterwards only ever appears here. See youtubeSchedule().
+         */
+        remote_publish_at: string | null;
         /** A correction in flight, so the list can say so plainly. */
         is_replacing: boolean;
         /** Broke mid-workflow. The published video may still be fine. */
@@ -213,6 +219,7 @@ export type ContentProject = {
         video_id: string | null;
         url: string | null;
         uploaded_at: string | null;
+        /** Recorded by our upload and frozen there; see youtubeSchedule(). */
         publish_at: string | null;
         /** Intended but not yet sent; see the summary type. */
         planned_publish_at: string | null;

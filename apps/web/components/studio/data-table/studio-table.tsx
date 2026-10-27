@@ -356,6 +356,10 @@ function YouTubeCell({ project }: { project: ContentProjectSummary }) {
     const schedule = youtubeSchedule({
         scheduledAt: project.youtube.scheduled_at,
         plannedPublishAt: project.youtube.planned_publish_at,
+        // What YouTube holds now beats the time frozen at upload, so a
+        // schedule moved afterwards shows the date it was moved to.
+        remotePublishAt: project.youtube.remote_publish_at,
+        remoteStatus: project.youtube.remote_status,
     });
 
     return (

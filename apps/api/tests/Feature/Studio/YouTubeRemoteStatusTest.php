@@ -282,4 +282,65 @@ class YouTubeRemoteStatusTest extends TestCase
         $this->postJson("/api/v1/content-projects/{$project->uuid}/youtube/sync")
             ->assertStatus(422);
     }
+
+    // ── The schedule two columns disagree about ─────────────────────────────
+
+    #[Test]
+    public function the_list_carries_the_publish_time_youtube_currently_holds(): void
+    {
+        /*
+         * youtube_publish_at is written by the upload and never again, so a
+         * schedule changed afterwards lived only in youtube_remote_publish_at
+         * — which the list payload did not carry at all. The Studio table
+         * could therefore only ever show the time a video was first uploaded
+         * with, however many times it had been moved since, while the project
+         * page showed the new one under "What YouTube says now".
+         */
+        Sanctum::actingAs($user = User::factory()->create());
+
+        $atUpload = now()->addDays(2)->startOfMinute();
+        $movedTo = now()->addDays(9)->startOfMinute();
+
+        ContentProject::factory()->create([
+            'user_id' => $user->id,
+            'youtube_status' => YouTubeStatus::Scheduled,
+            'youtube_video_id' => 'vid-1',
+            'youtube_publish_at' => $atUpload,
+            'youtube_remote_status' => YouTubeRemoteStatus::Scheduled->value,
+            'youtube_remote_publish_at' => $movedTo,
+            'youtube_remote_synced_at' => now(),
+        ]);
+
+        $row = $this->getJson('/api/v1/content-projects')->assertOk()->json('data.0.youtube');
+
+        // Both are reported, because they answer different questions and the
+        // client decides which it is asking — see youtubeSchedule().
+        $this->assertSame($atUpload->toIso8601String(), $row['scheduled_at']);
+        $this->assertSame($movedTo->toIso8601String(), $row['remote_publish_at']);
+    }
+
+    #[Test]
+    public function a_published_video_reports_no_remote_publish_time(): void
+    {
+        // Null here is the signal that stops a live video advertising the
+        // schedule it was uploaded with. The client relies on being able to
+        // tell "no publish time" from "never asked".
+        Sanctum::actingAs($user = User::factory()->create());
+
+        ContentProject::factory()->create([
+            'user_id' => $user->id,
+            'youtube_status' => YouTubeStatus::Published,
+            'youtube_video_id' => 'vid-1',
+            'youtube_publish_at' => now()->subDay(),
+            'youtube_remote_status' => YouTubeRemoteStatus::Published->value,
+            'youtube_remote_publish_at' => null,
+            'youtube_remote_synced_at' => now(),
+        ]);
+
+        $row = $this->getJson('/api/v1/content-projects')->assertOk()->json('data.0.youtube');
+
+        $this->assertNotNull($row['scheduled_at']);
+        $this->assertNull($row['remote_publish_at']);
+        $this->assertSame(YouTubeRemoteStatus::Published->value, $row['remote_status']);
+    }
 }
