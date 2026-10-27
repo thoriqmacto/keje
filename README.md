@@ -955,6 +955,43 @@ The sync is read-only in both directions. It never sets privacy and never
 re-uploads: if a public video was made private, that is the truth to report,
 not a difference to correct.
 
+### Two publish times, and which one a screen shows
+
+A scheduled video has its publish time recorded twice, and they are not always
+the same number:
+
+| Field | Written by | Changes afterwards? |
+|---|---|---|
+| `scheduled_at` / `youtube.publish_at` | the upload, from what `videos.insert` returned | **No.** Frozen at that moment |
+| `youtube.remote.publish_at` | the sync, from what `videos.list` says now | Yes, every time YouTube's answer does |
+
+Move a schedule after the upload — with **Update on YouTube**, or by editing
+the video in YouTube Studio and letting the sync pick it up — and the new time
+lands in the second field only. The first keeps the time the video was first
+uploaded with, forever.
+
+So **what YouTube currently holds wins** wherever a publish time is displayed,
+which is the same rule the status badge already follows. Both the Studio table
+and the project page ask `youtubeSchedule()`, and it resolves them in this
+order:
+
+1. **A remote status that is not `unavailable`** → the remote publish time, and
+   `null` is an answer: a published video holds no publish time, and falling
+   back here would have the row promise a publication that already happened.
+2. **No remote status yet** → our own upload-time record. Nobody has asked
+   YouTube, which is most of a freshly uploaded video's life.
+3. **`unavailable`** → our own record too. The sync writes that status without
+   touching the remote publish time, so whatever sits beside it was last seen
+   at some unknown point and may be long gone.
+4. **No video at all** → the planned time from the metadata, labelled as a plan
+   rather than a promise.
+
+> This was a bug until October 2026: the list payload carried no remote publish
+> time at all, so the Studio table could only ever show the time a video was
+> first uploaded with. The project page looked correct because the fresh value
+> was visible a few rows down under *What YouTube says now* — the schedule line
+> above it was reading the frozen column too.
+
 ## Studio views, and keeping them
 
 The Studio table has three kinds of state, and they are deliberately separate.

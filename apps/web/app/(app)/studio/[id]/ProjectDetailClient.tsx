@@ -990,6 +990,11 @@ function YouTubeScheduleLine({ project }: { project: ContentProject }) {
     const schedule = youtubeSchedule({
         scheduledAt: project.youtube.publish_at,
         plannedPublishAt: project.youtube.planned_publish_at,
+        // Stale here for the same reason it was stale in the table: this line
+        // read the upload-time column while the fresh value sat a few rows
+        // below under "What YouTube says now".
+        remotePublishAt: project.youtube.remote.publish_at,
+        remoteStatus: project.youtube.remote.status,
     });
 
     if (schedule === null) {

@@ -67,6 +67,8 @@ export function youtubeBadgeStatus(input: YouTubeBadgeInput, status: string): st
  *
  *   confirmed   YouTube has the video and a publishAt. It will publish at
  *               that time whether or not Keje is running. This is a promise.
+ *               Which of the two confirmed times to trust is its own
+ *               question — see below.
  *
  *   planned     Somebody filled in a schedule and nothing has been uploaded
  *               yet — usually because the render is still queued. It is what
@@ -82,12 +84,37 @@ export function youtubeBadgeStatus(input: YouTubeBadgeInput, status: string): st
  * and then silently never publishes), so a plan whose time has gone is not a
  * date to look forward to — it is a project that cannot be uploaded until
  * somebody changes it.
+ *
+ * ── Which confirmed time, when there are two ────────────────────────────
+ *
+ * `scheduledAt` is written by the upload and never again. Move a schedule
+ * afterwards — through PATCH /youtube/metadata, or in YouTube Studio with the
+ * sync picking it up — and the new time arrives as `remotePublishAt` while
+ * `scheduledAt` keeps the one the video was first uploaded with. Showing the
+ * frozen one is how a row goes on advertising a date that was changed weeks
+ * ago.
+ *
+ * So what YouTube currently holds wins, which is the same rule
+ * youtubeBadgeLabel already applies to the status and for the same reason.
+ * The date simply had not been given it.
  */
 export type YouTubeScheduleInput = {
-    /** Confirmed by YouTube at upload; `null` until then. */
+    /** Recorded by our upload. Frozen at that moment; never updated after. */
     scheduledAt?: string | null;
     /** Intended, not yet sent. The API withholds it once a video exists. */
     plannedPublishAt?: string | null;
+    /** What YouTube holds now. Wins over `scheduledAt` when we have asked. */
+    remotePublishAt?: string | null;
+    /**
+     * The remote status `remotePublishAt` came with, which is what says
+     * whether we have a current answer at all.
+     *
+     * `unavailable` is excluded deliberately: the sync writes that status
+     * without touching the publish time, so the time beside it is whatever
+     * was last seen and may be long gone. A deleted video must not keep
+     * presenting a stale date as though YouTube had just confirmed it.
+     */
+    remoteStatus?: string | null;
 };
 
 export type YouTubeSchedule = {
@@ -102,8 +129,21 @@ export function youtubeSchedule(
     input: YouTubeScheduleInput,
     now: Date = new Date(),
 ): YouTubeSchedule | null {
-    // A confirmed schedule wins outright. Both are set for most of a
-    // scheduled video's life, and only one of them is what YouTube will act on.
+    /*
+     * Once we have a current answer from YouTube, it is the whole truth about
+     * the date — including when it says there is no date. A published video
+     * holds no publish time, and falling back to the one we recorded at
+     * upload would have the row claim a schedule for something that has
+     * already gone live.
+     */
+    if (input.remoteStatus && input.remoteStatus !== "unavailable") {
+        return input.remotePublishAt
+            ? { at: input.remotePublishAt, planned: false, overdue: false }
+            : null;
+    }
+
+    // Not asked yet, or asked and told the video is gone. Our own record of
+    // the upload is the best thing left.
     if (input.scheduledAt) {
         return { at: input.scheduledAt, planned: false, overdue: false };
     }
